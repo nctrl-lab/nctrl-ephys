@@ -3,9 +3,9 @@ import re
 from typing import Union, Tuple, Optional
 import numpy as np
 import pandas as pd 
-from nctrle.util import finder
 import matplotlib.pyplot as plt
 
+from nctrle.util import finder
 
 def read_analog(
     filename: str,
@@ -30,7 +30,7 @@ def read_analog(
     Returns:
     --------
     numpy.ndarray
-        Array containing the read data, with shape (n_channels, n_samples).
+        Array containing the read data, with shape (n_samples, n_channels).
 
     Raises:
     -------
@@ -61,11 +61,7 @@ def read_analog(
     if channel_idx is None:
         channel_idx = get_channel_idx(meta)
 
-    AiRangeMax = meta.get('imAiRangeMax') or meta.get('niAiRangeMax')
-    MaxInt = meta.get('imMaxInt') or meta.get('niMaxInt') or 512
-    gains = get_gain(meta)
-    uV_per_bit = 1000000 * AiRangeMax / MaxInt / gains
-
+    uV_per_bit = get_uV_per_bit(meta)
     data = read_bin(bin_fn, n_channel, dtype, channel_idx, sample_range)
 
     return data * uV_per_bit[channel_idx][np.newaxis, :]
@@ -155,7 +151,7 @@ def read_bin(filename: str, n_channel: int = 385, dtype: str = 'int16',
     Returns
     -------
     numpy.ndarray
-        Array containing the read data, with shape (n_channel, n_sample).
+        Array containing the read data, with shape (n_sample, len(channel_idx)).
 
     Raises
     ------
@@ -425,6 +421,13 @@ def get_gain(meta):
         raise ValueError(f"Unrecognized recording type: {meta['typeThis']}")
 
 
+def get_uV_per_bit(meta):
+    AiRangeMax = meta.get('imAiRangeMax') or meta.get('niAiRangeMax')
+    MaxInt = meta.get('imMaxInt') or meta.get('niMaxInt') or 512
+    gains = get_gain(meta)
+    return 1000000 * AiRangeMax / MaxInt / gains
+
+
 def get_channel_idx(meta, analog=True):
     """
     Get the channel index slice based on the recording type and whether analog or digital channels are desired.
@@ -509,7 +512,7 @@ if __name__ == '__main__':
     fn = finder(fd)
     # meta = read_meta(fn)
     # data = read_digital(fn)
-    data = read_analog(fn, channel_idx = slice(0, 384, 4), sample_range=(0, 3000))
+    data = read_analog(fn, sample_range=(0, 3000))
     
     # denoise data
     # subtract median of each channel
