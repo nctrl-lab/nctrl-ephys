@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd 
 import matplotlib.pyplot as plt
 
-from nctrle.util import finder
+from ephys.util import finder
 
 def read_analog(
     filename: str,
@@ -121,7 +121,7 @@ def read_digital(filename, dtype='uint16'):
     
     events = pd.DataFrame({
         'time': timestamps / sample_rate,  # in seconds
-        'time_frame': timestamps,
+        'sample': timestamps,
         'chan': event_id,
         'type': event_type
     })

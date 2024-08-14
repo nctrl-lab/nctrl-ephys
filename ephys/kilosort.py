@@ -3,19 +3,20 @@ import numpy as np
 import pandas as pd
 import scipy.io as sio
 
-from nctrle.util import finder
-from nctrle.spikeglx import read_meta, get_uV_per_bit
+from ephys.util import finder
+from ephys.spikeglx import read_meta, get_uV_per_bit
 
 class Spike():
     def __init__(self, path=None):
         if path is None:
-            fn = finder(os.path.expanduser('~'), 'params.py$')
+            fn = finder(None, 'params.py$')
             path = os.path.dirname(fn)
 
         if not os.path.exists(path):
             raise ValueError(f"Path {path} does not exist")
 
         self.path = path
+        self.session = path.split(os.path.sep)[-2]
         self.load_meta()
         self.load_kilosort()
 
@@ -98,7 +99,7 @@ class Spike():
             'Vpp': self.Vpp,
             'n_unit': self.n_unit,
         }
-        sio.savemat(os.path.join(self.path, 'data.mat'), spike)
+        sio.savemat(os.path.join(self.path, f'{self.session}_data.mat'), {'Spike': spike})
 
 
 if __name__ == "__main__":
