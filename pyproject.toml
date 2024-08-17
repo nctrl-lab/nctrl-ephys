@@ -25,3 +25,4 @@ dynamic = ["version"]
 Homepage = "https://github.com/lapis42/nctrl-ephys"
 
 [project.scripts]
+ephys = "ephys.command:main"

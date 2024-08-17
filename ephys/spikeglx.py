@@ -168,6 +168,8 @@ def read_bin(filename: str, n_channel: int = 385, dtype: str = 'int16',
     n_sample_file = os.path.getsize(filename) // (n_channel * np.dtype(dtype).itemsize)
     if sample_range is None:
         sample_range = (0, n_sample_file)
+    if sample_range[1] > n_sample_file:
+        sample_range = (sample_range[0], n_sample_file)
 
     offset = sample_range[0] * n_channel * np.dtype(dtype).itemsize
     n_sample = sample_range[1] - sample_range[0]

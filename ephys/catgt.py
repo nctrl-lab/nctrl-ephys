@@ -12,7 +12,7 @@
 #   g0_t0, g0_t1, g0_t2, ...
 #   g1_t0, g1_t1, g1_t2, ...
 #   g2_t0, g2_t1, g2_t2, ...
-#
+
 
 import re
 import glob
@@ -110,7 +110,7 @@ def run_catgt(path=None):
                     choices=list(zip(imecs, imecs_id)),
                     default=list(zip(imecs, imecs_id))
                 )
-                i_imec = ','.join([id for _, id in selected_imecs])
+                i_imec = ','.join(selected_imecs)
         
         session_name = os.path.basename(session)
         animal_dir = os.path.dirname(session)
@@ -119,8 +119,8 @@ def run_catgt(path=None):
             cmd = f'{catgt} -dir="{animal_dir}" -run="{session_name}" -gtlist={gtlist}'
             if stream == 'ni':
                 # run CatGT only when multiple GTs are selected
-                if len(selected_gt) < 2:
-                    continue
+                # if len(selected_gt) < 2:
+                #     continue
                 cmd += f' -ni -dest="{dest_dir}" -t_miss_ok -zerofillmax=0'
             elif stream == 'ap':
                 cmd += f' -ap -prb={i_imec} -dest="{dest_dir}" -prb_fld -t_miss_ok -zerofillmax=0 -out_prb_fld -gbldmx'
@@ -128,14 +128,13 @@ def run_catgt(path=None):
                 # make sure lf.meta exists
                 if not glob.glob(f"{session}_g0\\**\\*lf.meta"):
                     continue
-                if len(selected_gt) < 2:
-                    continue
+                # if len(selected_gt) < 2:
+                #     continue
                 cmd += f' -lf -prb={i_imec} -dest="{dest_dir}" -prb_fld -t_miss_ok -zerofillmax=0 -out_prb_fld'
             cmds.append((session, stream, cmd))
     
     for i, (session, stream, cmd) in enumerate(cmds, 1):
-        print(cmd)
-        print(f"\033[91m{i}/{len(cmds)}: Running CatGT for {session} ({stream}):\033[0m")
+        print(f"\033[91m{i}/{len(cmds)}: Running CatGT for {session} ({stream}): {cmd}\033[0m")
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode != 0:
             print(f"\033[91mError running CatGT for {session} ({stream}):\033[0m")
@@ -144,4 +143,4 @@ def run_catgt(path=None):
             print(f"\033[32mCatGT completed successfully for {session} ({stream})\033[0m")
 
 if __name__ == '__main__':
-    run_catgt(path='C:\\Users\\lapis\\Dropbox (HHMI)\\data')
+    run_catgt(path='C:\\SGL_DATA')

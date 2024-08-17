@@ -4,7 +4,17 @@ import pandas as pd
 import scipy.io as sio
 
 from ephys.util import finder
-from ephys.spikeglx import read_meta, get_uV_per_bit
+from ephys.spikeglx import read_meta, read_analog, get_uV_per_bit
+
+
+def run_ks(path):
+    from kilosort import run_kilosort
+    from kilosort.parameters import DEFAULT_SETTINGS
+
+    fns = finder(path, 'ap.meta$')
+    for fn in fns:
+        run_kilosort(DEFAULT_SETTINGS, data_dir=fn)
+
 
 class Spike():
     def __init__(self, path=None):
@@ -51,6 +61,7 @@ class Spike():
         
         # Convert spike times to seconds and group by good clusters
         self.time = np.array([sample[cluster == c] / self.sample_rate for c in good_id], dtype=object)
+        self.sample = np.array([sample[cluster == c] for c in good_id], dtype=object)
         
         # Calculate firing rates for good clusters
         self.firing_rate = [len(i) / (sample.max() / self.sample_rate) for i in self.time]
@@ -86,6 +97,47 @@ class Spike():
                                   for i, c in enumerate(good_id)], axis=0)
         
         self.Vpp = np.ptp(self.waveform, axis=(1, 2))  # peak-to-peak amplitude in uV
+    
+    def load_waveforms(self):
+        """
+        Load waveforms from the raw data file
+        """
+        MAX_MEMORY = int(4e9)
+        valid_channels = np.unique(self.max_channel)
+        n_sample = self.meta['fileSizeBytes'] // (self.meta['nSavedChans'] * 2)
+        n_memory = n_sample * len(valid_channels) * 2
+        n_batch = int(np.ceil(n_memory / MAX_MEMORY))
+        waveform_raw = [np.zeros((len(i), 61)) for i in self.sample]
+
+        spk_idx = []
+        for sample in self.sample:
+            out = (np.diff(sample) < 61) | (sample < 61) | (sample > n_sample - 61)
+            sample = sample[~out]
+            spk_idx.append((sample[:, np.newaxis] + np.arange(-20, 41)[np.newaxis, :]).flatten())
+
+        for i_batch in range(n_batch):
+            sample_range = (i_batch * MAX_MEMORY, min((i_batch + 1) * MAX_MEMORY, n_sample))
+            data = read_analog(self.data_file_path, channel_idx=valid_channels, sample_range=sample_range)
+            
+            for i_unit, i_spk in enumerate(spk_idx):
+                mask = (i_sample >= sample_range[0]) & (i_sample < sample_range[1])
+                samples = i_sample[mask] - sample_range[0]
+                
+                if len(samples) > 0:
+                    # Calculate start and end indices for each sample
+                    start_indices = np.maximum(0, samples - 19)
+                    end_indices = np.minimum(data.shape[0], samples + 42)
+                    
+                    # Create a list of ranges for each sample
+                    waveform_ranges = [np.arange(start, end) for start, end in zip(start_indices, end_indices)]
+                    
+                    waveforms = data[np.clip(waveform_ranges, 0, data.shape[0] - 1), self.max_channel[i_unit]]
+                    
+                    mid_point = min(19, waveforms.shape[1] // 2)
+                    waveform_raw[i_unit][mask] = waveforms - waveforms[:, mid_point:mid_point+1]
+
+        self.waveform_raw = waveform_raw
+        breakpoint()
 
     def save(self):
         spike = {
@@ -106,4 +158,5 @@ if __name__ == "__main__":
     fn = finder("C:/Users/lapis/Dropbox (HHMI)/data/", "params.py$")
     fd = os.path.dirname(fn)
     spike = Spike(fd)
-    spike.save()
+    spike.load_waveforms()
+    # spike.save()
