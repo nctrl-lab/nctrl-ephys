@@ -12,7 +12,8 @@ def finder(path: Optional[str] = None,
            pattern: str = r'\.meta$',
            multiple: bool = False,
            folder: bool = False,
-           ask: bool = True) -> Optional[Union[str, List[str]]]:
+           ask: bool = True,
+           exclude_pattern: Optional[str] = r'_g\d+$') -> Optional[Union[str, List[str]]]:
     """
     Explore files in a given path and return a user-selected file matching the pattern.
 
@@ -22,6 +23,7 @@ def finder(path: Optional[str] = None,
         multiple (bool, optional): Whether to allow multiple files to be selected. Defaults to False.
         folder (bool, optional): Whether to select folders or files. Defaults to False.
         ask (bool, optional): Whether to use a dialog or not. Defaults to True.
+        exclude_pattern (Optional[str], optional): Regex pattern to exclude filenames. Defaults to None.
 
     Returns:
         Optional[Union[str, List[str]]]: The selected file path(s), or None if no files are found.
@@ -41,7 +43,7 @@ def finder(path: Optional[str] = None,
     ]
 
     if folder:
-        files = [os.path.dirname(file) for file in files]
+        files = [re.sub(exclude_pattern, '', os.path.dirname(file)) for file in files]
         files = list(set(files))
         files.sort()  # Sort the list of folders alphabetically
 

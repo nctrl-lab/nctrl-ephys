@@ -52,9 +52,6 @@ def get_catgt():
 def get_sessions(path=None):
     print("\033[1;36mPlease select the sessions to process using CatGT.\033[0m")
     sessions = finder(path=path, pattern=r'\.nidq\.meta$', multiple=True, folder=True)
-    if sessions is None:
-        return []
-    sessions = list(set([re.sub(r'_g\d+$', '', i) for i in sessions]))
     if not sessions:
         print("No sessions found.")
         return []
@@ -81,7 +78,7 @@ def run_catgt(path=None):
     
     cmds = []
     for session in sessions:
-        dest_dir = f"{session}_g0"
+        dest_dir = os.path.dirname(session) # parent folder
         if glob.glob(f"{dest_dir}/catgt_*/"):
             print(f"Skipping {session}: CatGT output already exists.")
             if not inquirer.confirm("Do you want to overwrite?", default=True):
@@ -95,7 +92,7 @@ def run_catgt(path=None):
             default=session_gt
         )
 
-        gtlist = ''.join(["{g" + re.search(r'_g(\d+)', gt).group(1) + ",t" + re.search(r'_t(\d+)', gt).group(1) + "a,t" + re.search(r'_t(\d+)', gt).group(1) + "b}" for gt in selected_gt])
+        gtlist = ''.join(["{" + re.search(r'_g(\d+)', gt).group(1) + "," + re.search(r'_t(\d+)', gt).group(1) + "," + re.search(r'_t(\d+)', gt).group(1) + "}" for gt in selected_gt])
 
         # Select Probe
         i_imec = ''
