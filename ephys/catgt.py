@@ -24,7 +24,7 @@ import subprocess
 import tkinter as tk
 from tkinter import filedialog
 
-from ephys.util import finder
+from .utils import finder
 
 def get_catgt():
     fn = keyring.get_password("nctrl", "catgt")
@@ -95,7 +95,7 @@ def run_catgt(path=None):
             default=session_gt
         )
 
-        gtlist = ''.join([f"{{g{re.search(r'_g(\d+)', gt).group(1)},t{re.search(r'_t(\d+)', gt).group(1)}a,t{re.search(r'_t(\d+)', gt).group(1)}b}}" for gt in selected_gt])
+        gtlist = ''.join(["{g" + re.search(r'_g(\d+)', gt).group(1) + ",t" + re.search(r'_t(\d+)', gt).group(1) + "a,t" + re.search(r'_t(\d+)', gt).group(1) + "b}" for gt in selected_gt])
 
         # Select Probe
         i_imec = ''

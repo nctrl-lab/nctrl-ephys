@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Optional
+from typing import Optional, Union, List
 
 from IPython import get_ipython
 import tkinter as tk
@@ -11,7 +11,8 @@ import inquirer
 def finder(path: Optional[str] = None,
            pattern: str = r'\.meta$',
            multiple: bool = False,
-           folder: bool = False) -> Optional[str | list[str]]:
+           folder: bool = False,
+           ask: bool = True) -> Optional[Union[str, List[str]]]:
     """
     Explore files in a given path and return a user-selected file matching the pattern.
 
@@ -20,9 +21,10 @@ def finder(path: Optional[str] = None,
         pattern (str, optional): Regex pattern to match filenames. Defaults to '.meta'.
         multiple (bool, optional): Whether to allow multiple files to be selected. Defaults to False.
         folder (bool, optional): Whether to select folders or files. Defaults to False.
+        ask (bool, optional): Whether to use a dialog or not. Defaults to True.
 
     Returns:
-        Optional[str | list[str]]: The selected file path(s), or None if no files are found.
+        Optional[Union[str, List[str]]]: The selected file path(s), or None if no files are found.
     """
     if path is None:
         root = tk.Tk()
@@ -45,6 +47,9 @@ def finder(path: Optional[str] = None,
 
     if not files:
         return None
+    
+    if not ask:
+        return files
 
     try:
         # If running in an IPython environment, use a Tkinter dialog for file selection
@@ -76,12 +81,28 @@ def finder(path: Optional[str] = None,
         # If running in a command line environment, use inquirer for file selection
         else:
             if multiple:
-                return inquirer.checkbox("Select folders" if folder else "Select files (Space: select/unselect, Ctrl-A: select all, Ctrl-R: unselect all, Enter: confirm)", choices=files, default=files)
+                cmd = f"Select {'folders' if folder else 'files'} (Space: select/unselect, Ctrl-A: select all, Ctrl-R: unselect all, Enter: confirm)"
+                return inquirer.checkbox(cmd, choices=files, default=files)
             else:
-                return inquirer.list_input("Select a folder" if folder else "Select a file (Space: select/unselect, Enter: confirm)", choices=files)
+                cmd = f"Select a {'folder' if folder else 'file'} (Enter: confirm)"
+                return inquirer.list_input(cmd, choices=files)
 
     except Exception as e:
         print(f"An error occurred: {e}")
         return None
+
+
+def confirm(message: str, default: bool = False) -> bool:
+    if get_ipython() and 'IPKernelApp' in get_ipython().config:
+        root = tk.Tk()
+        root.withdraw()  # Hide the main window
+        result = tk.messagebox.askyesno(message, message)
+        root.destroy()
+        return result
+    else:
+        return inquirer.confirm(message, default=default)
+
+
 if __name__ == "__main__":
-    print(finder(folder=True, multiple=True, pattern=r'\.nidq\.meta$'))
+    # print(finder(folder=True, multiple=True, pattern=r'.bin$'))
+    confirm("Are you sure you want to delete all files in this folder?")
