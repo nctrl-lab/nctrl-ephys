@@ -4,11 +4,19 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from scipy.interpolate import interp1d
+from scipy.stats import linregress
+
 from .utils import finder
-from .spikeglx import read_bin
+from .spikeglx import read_bin, read_digital
 
 class BMI:
     def __init__(self, path=None):
+        self.time_sync_fpga = np.array([0, 1, 3, 64, 105, 181, 266, 284, 382, 469, 531,
+            545, 551, 614, 712, 726, 810, 830, 846, 893, 983, 1024,
+            1113, 1196, 1214, 1242, 1257, 1285, 1379, 1477, 1537, 1567, 1634,
+            1697, 1718, 1744, 1749, 1811, 1862, 1917, 1995, 2047])  # in seconds
+
         path = finder(path, pattern=r'\.prb$', folder=True)
 
         if not path or not os.path.exists(path):
@@ -20,7 +28,7 @@ class BMI:
         self.file_paths['prb'] = next((os.path.join(path, fn) for fn in os.listdir(path) if fn.endswith('.prb')), None)
 
         for file_type in ['prb', 'mua.bin', 'spk.bin', 'spk_wav.bin', 'fet.bin', os.path.join('spktag', 'model.pd')]:
-            setattr(self, f"{file_type.split('.')[0]}_fn", self.file_paths.get(file_type))
+            setattr(self, f"{os.path.basename(file_type).split('.')[0]}_fn", self.file_paths.get(file_type))
 
         print('\n'.join(f"  {k}: {v}" for k, v in self.file_paths.items()))
 
@@ -101,7 +109,15 @@ class BMI:
         if self.fet_fn:
             scale_factor = float(2**self.binary_radix) / self.uV_per_bit
 
-            fet = np.fromfile(self.fet_fn, dtype=np.int32).reshape(-1, 8)
+            file_size = os.stat(self.fet_fn).st_size
+            if file_size // 4 % 8 == 0:
+                n_col = 8
+            elif file_size // 4 % 7 == 0:
+                n_col = 7
+            else:
+                raise ValueError(f'Unsupported fet file size: {file_size}')
+
+            fet = np.fromfile(self.fet_fn, dtype=np.int32).reshape(-1, n_col)
             self.fet = pd.DataFrame({
                 'frame': fet[:, 0].astype(np.int64),
                 'group_id': fet[:, 1],
@@ -110,8 +126,9 @@ class BMI:
                 'fet2': fet[:, 4].astype(np.float32) / scale_factor,
                 'fet3': fet[:, 5].astype(np.float32) / scale_factor,
                 'spike_id': fet[:, 6],
-                'spike_energy': fet[:, 7].astype(np.float32) / scale_factor
             })
+            if n_col == 8:
+                self.fet['spike_energy'] = fet[:, 7].astype(np.float32) / scale_factor
 
             # Check for any potential issues in the loaded data
             if self.fet['frame'].diff().min() < 0:
@@ -122,10 +139,74 @@ class BMI:
                 print("\033[91mWarning: Infinite values detected in fet data.\033[0m")
 
             # TODO: If frame rolls over, add 2^32 to the frame
+    
+    def load_model(self):
+        if os.path.exists(self.model_fn):
+            self.model = pd.read_pickle(self.model_fn)
+
+    def load_nidq(self, path=None):
+        """
+        Load nidq data from meta file.
+
+        Parameters
+        ----------
+        path : str, optional
+            Path to the nidq meta file, by default None
+        """
+        if path is None:
+            path = self.path
+
+        self.nidq_fn = finder(path, pattern=r'\.nidq.meta$', ask=False)[0]
+        print(f"bmi.BMI.load_nidq: Loading {self.nidq_fn}")
+        if os.path.exists(self.nidq_fn):
+            self.nidq = read_digital(self.nidq_fn)
+
+
+            self.time_sync_nidq = self.nidq.query("chan==4 and type==1").time.values
+            self.time_sync_nidq_off = self.nidq.query("chan==4 and type==0").time.values
+            print(f"bmi.BMI.load_nidq: Found {len(self.time_sync_nidq)} sync pulses")
+            pulse_duration = self.time_sync_nidq_off - self.time_sync_nidq
+            if pulse_duration.min() < 0.090:
+                print(f"bmi.BMI.load_nidq: Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
+            
+            if self.check_sync():
+                self.nidq['time_fpga'] = self.nidq_to_fpga(self.nidq.time.values)
+        
+    def save_nidq(self, path=None):
+        if path is None:
+            path = self.path
+        
+        self.nidq.to_pickle(os.path.join(path, 'nidq.pd'))
+
+    def check_sync(self):
+        n_sync = len(self.time_sync_nidq)
+        time_sync_fpga = self.time_sync_fpga[:n_sync]
+
+        slope, intercept, r_value, _, _ = linregress(self.time_sync_nidq, time_sync_fpga)
+        r_squared = r_value**2
+        print(f"bmi.BMI.check_sync: Sync slope: {slope:.6f}, intercept: {intercept:.6f}, r-squared: {r_squared:.6f}")
+
+        if r_squared < 0.98:
+            print("bmi.BMI.check_sync: Sync failed")
+            return False
+
+        print(f"bmi.BMI.check_sync: Sync OK")
+        sync_diff = self.time_sync_nidq * slope + intercept - time_sync_fpga
+        outlier = sync_diff >= 0.002  # 2 ms
+
+        if outlier.sum() > 0:
+            time_sync_fpga = time_sync_fpga[~outlier]
+            self.time_sync_nidq = self.time_sync_nidq[~outlier]
+            print(f"bmi.BMI.check_sync: Removed {outlier.sum()} outliers")
+
+        self.nidq_to_fpga = interp1d(self.time_sync_nidq, time_sync_fpga, kind='linear', fill_value="extrapolate")
+        return True
 
 
 if __name__ == '__main__':
     bmi = BMI('C:\\SGL_DATA')
-    bmi.load_spk()
-    bmi.load_spk_wav()
-    bmi.load_fet()
+    # bmi.load_spk()
+    # bmi.load_spk_wav()
+    # bmi.load_fet()
+    bmi.load_nidq()
+    bmi.save_nidq()
