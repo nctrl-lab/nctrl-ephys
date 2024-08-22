@@ -1,5 +1,7 @@
 import os
+import re
 import json
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -11,37 +13,73 @@ from .utils import finder
 from .spikeglx import read_bin, read_digital
 
 class BMI:
-    def __init__(self, path=None):
+    def __init__(self, path=None, pattern=r'\.prb$'):
+        """
+        Initialize BMI class.
+
+        Notes
+        -----
+        - The path to the .prb file is the main session folder.
+        - It is assumed that there is only one .prb file in the session folder.
+        - There can be multiple mua.bin, fet.bin, nidq.bin files in the session folder.
+        - The number of mua.bin, fet.bin, nidq.bin files should be the same.
+        - So make sure to copy nidq.bin files under the subfolder such as main_path/nidq/**_g0/**_g0_t0.nidq.meta, main_path/nidq/**_g1/**_g1_t0.nidq.meta, etc.
+
+            |-- mua.bin (1) --|    |-- mua.bin (2) --|    |-- mua.bin (3) --|
+            |-- fet.bin (1) --|    |-- fet.bin (2) --|    |-- fet.bin (3) --|
+           |--- nidq.bin (1) --| |--- nidq.bin (2) ---|  |--- nidq.bin (3) ---|
+        
+        - These files are going to be ordered by the time of the file creation.
+        """
         self.time_sync_fpga = np.array([0, 1, 3, 64, 105, 181, 266, 284, 382, 469, 531,
             545, 551, 614, 712, 726, 810, 830, 846, 893, 983, 1024,
             1113, 1196, 1214, 1242, 1257, 1285, 1379, 1477, 1537, 1567, 1634,
             1697, 1718, 1744, 1749, 1811, 1862, 1917, 1995, 2047])  # in seconds
-
-        path = finder(path, pattern=r'\.prb$', folder=True)
-
-        if not path or not os.path.exists(path):
-            raise ValueError(f'Path {path} does not exist')
-
-        self.path = path
-        self.file_names = ['mua.bin', 'spk.bin', 'spk_wav.bin', 'fet.bin', os.path.join('spktag', 'model.pd')]
-        self.file_paths = {fn: os.path.join(path, fn) for fn in self.file_names if os.path.exists(os.path.join(path, fn))}
-        self.file_paths['prb'] = next((os.path.join(path, fn) for fn in os.listdir(path) if fn.endswith('.prb')), None)
-
-        for file_type in ['prb', 'mua.bin', 'spk.bin', 'spk_wav.bin', 'fet.bin', os.path.join('spktag', 'model.pd')]:
-            setattr(self, f"{os.path.basename(file_type).split('.')[0]}_fn", self.file_paths.get(file_type))
-
-        print('\n'.join(f"  {k}: {v}" for k, v in self.file_paths.items()))
-
         self.n_channel = 160
         self.sample_rate = 25000.0
         self.binary_radix = 13
         self.uV_per_bit = 0.195
 
+        path = finder(path, pattern=pattern, folder=True)
+        if not path or not os.path.exists(path):
+            raise ValueError(f'Path {path} does not exist')
+        self.path = path
+
+        self.file_patterns = {
+            'prb': r'\.prb$',
+            'mua': r'mua\.bin$',
+            'spk': r'spk\.bin$',
+            'spk_wav': r'spk_wav\.bin$',
+            'fet': r'fet\.bin$',
+            'model': r'spktag[/\\]model\.pd$'
+        }
+        self.file_paths = {key: [] for key in self.file_patterns}
+
+        for root, _, files in os.walk(path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                for key, pattern in self.file_patterns.items():
+                    if re.search(pattern, file_path):
+                        self.file_paths[key].append(file_path)
+
+        for file_type, paths in self.file_paths.items():
+            setattr(self, f"{file_type}_fn", paths)
+        
+        # Order the file paths by the time of the file creation
+        for file_type, paths in self.file_paths.items():
+            self.file_paths[file_type] = sorted(paths, key=lambda x: os.path.getmtime(x))
+
+        for file_type, paths in self.file_paths.items():
+            print(f"  {file_type}:")
+            for path in paths:
+                print(f"    {path}")
+
         self.load_prb()
 
     def load_prb(self):
         if self.prb_fn:
-            with open(self.prb_fn, 'r') as f:
+            with open(self.prb_fn[0], 'r') as f:
+                print(f"ephys.BMI.load_prb: Loading {self.prb_fn[0]}")
                 prb = json.load(f)
                 self.n_channel = prb['params']['n_ch']
                 self.sample_rate = float(prb['params']['fs'])
@@ -64,23 +102,107 @@ class BMI:
         ax.axis('equal')
         plt.show()
 
-    def load_mua(self, channel_idx=slice(0, 128), sample_range=None):
+    def load_mua(self, file_idx=0, channel_idx=slice(0, 128), sample_range=None, scale=True):
         """
         Load mua data from binary file.
 
+        Parameters
+        ----------
+        channel_idx : slice or list, optional
+            The channels to load. If not provided, all channels are loaded.
+        sample_range : tuple, optional
+            The sample range to load. If not provided, all samples are loaded.
+        scale : bool, optional
+            Whether to scale the data to uV.
+
+        Notes
+        -----
         Check OneDrive/nclab/manual/ephys_intan/Intan_RHD2000_series_datasheet.pdf for more details.
         Amplifier Differential Gain: 192 V/V
         Amplifier AC Input Voltage Range: +/- 5 mV
+        Theoretical Maximum Voltage (+/- 15 bits): 2**15 * 0.195 = +/- 6.390 mV
         Voltage Step Size of ADC (Least Significant Bit): 0.195 uV
         """
+        print(f"ephys.BMI.load_mua: Loading {self.mua_fn[file_idx]}")
         selected_channel = self.channel_id[channel_idx]
-        data = read_bin(self.mua_fn, n_channel=self.n_channel, dtype='int32', 
+        data = read_bin(self.mua_fn[file_idx], n_channel=self.n_channel, dtype='int32', 
                         channel_idx=selected_channel, sample_range=sample_range)
 
-        return data / (2 ** self.binary_radix) * self.uV_per_bit
+        return data / (2 ** self.binary_radix) * self.uV_per_bit if scale else data
     
-    def plot_mua(self, channel_idx=slice(0, 128), sample_range=(5000, 10000)):
-        data = self.load_mua(channel_idx=channel_idx, sample_range=sample_range)
+    def save_meta(self):
+        """
+        Save metadata to a csv file.
+
+        This method collects information about the MUA binary files and saves it to a CSV file.
+        The metadata includes file names, modification times, file sizes, number of samples,
+        and start indices for each file.
+
+        Notes:
+        ------
+        - This method assumes that `self.mua_fn` contains the list of MUA binary file paths.
+        - The CSV file is saved in the same directory as the MUA files, with the name 'meta.csv'.
+        """
+
+        mtime = [datetime.fromtimestamp(os.path.getmtime(x)).strftime("%Y%m%d_%H%M%S") for x in self.mua_fn]
+        file_size = [os.path.getsize(x) for x in self.mua_fn]
+        self.n_sample = [int(os.path.getsize(x) / (4 * self.n_channel)) for x in self.mua_fn]
+        self.mua_start = np.concatenate([[0], np.cumsum(self.n_sample)[:-1]])
+        new_filesize = np.array(file_size) / 2 / self.n_channel * 128
+
+        df = pd.DataFrame({
+            'filename': self.mua_fn,
+            'mtime': mtime,
+            'filesize': file_size,
+            'new_filesize': new_filesize,
+            'n_sample': self.n_sample,
+            'start': self.mua_start
+        })
+        df.to_csv(os.path.join(self.path, 'meta.csv'), index=False)
+        print(f"Metadata saved to {os.path.join(self.path, 'meta.csv')}")
+    
+    def save_mua(self, output_path=None):
+        """
+        Concatenate mua data to an int16 binary file.
+
+        This method loads the MUA (Multi-Unit Activity) data from the original file(s),
+        converts it to int16 format, and saves it to a single binary file. This is 
+        typically done to prepare the data for spike sorting algorithms like Kilosort.
+
+        Parameters:
+        -----------
+        output_path : str, optional
+            The path where the concatenated int16 binary file will be saved.
+            If not provided, it defaults to a 'kilosort' subdirectory in the current path.
+
+        Notes:
+        ------
+        - The method assumes that the original data is in int32 format and needs to be 
+          converted to int16.
+        - Only the first 128 channels are typically used for spike sorting.
+        - The conversion process involves bit-shifting and scaling to preserve the 
+          signal quality while reducing the file size.
+        - uV/bit will be 1.56 for Intan RHD2000 series (13 bits, range -4096 to 4095, +/- 2**12).
+        - Considering Neuropixels 2.0's uV/bit is 3.784 (12 bits, range -2048 to 2047, +/- 2**11), this scaling factor is reasonable.
+        """
+        if output_path is None:
+            output_path = os.path.join(self.path, 'kilosort', 'mua_int16.bin')
+            if not os.path.exists(os.path.dirname(output_path)):
+                os.makedirs(os.path.dirname(output_path))
+
+        # TODO: load mua data and save as int16
+        with open(output_path, 'wb') as f:
+            for i, fn in enumerate(self.mua_fn):
+                bin_data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], 160))
+                bin_data = np.right_shift(bin_data[:, :128], 12).astype(np.int16)
+
+            # calculate read size
+            print("saving {}".format(bin_file[i_file]))
+            bin_data.tofile(f)
+        
+    
+    def plot_mua(self, file_idx=0, channel_idx=slice(0, 128), sample_range=(5000, 10000)):
+        data = self.load_mua(file_idx=file_idx, channel_idx=channel_idx, sample_range=sample_range)
 
         data -= np.median(data, axis=0, keepdims=True)
         data -= np.median(data, axis=1, keepdims=True)
@@ -93,23 +215,26 @@ class BMI:
         plt.title('Raw data')
         plt.show()
 
-    def load_spk(self):
+    def load_spk(self, file_idx=0):
         if self.spk_fn:
-            spk = np.fromfile(self.spk_fn, dtype='<i4').reshape(-1, 2)
+            print(f"ephys.BMI.load_spk: Loading {self.spk_fn[file_idx]}")
+            spk = np.fromfile(self.spk_fn[file_idx], dtype='<i4').reshape(-1, 2)
             self.spk_frame = spk[:, 0]
             self.spk_channel = spk[:, 1]  # Note: not in physical order
     
-    def load_spk_wav(self):
+    def load_spk_wav(self, file_idx=0):
         if self.spk_wav_fn:
-            spk_wav = np.fromfile(self.spk_wav_fn, dtype=np.int32).reshape(-1, 20, 4)
+            print(f"ephys.BMI.load_spk_wav: Loading {self.spk_wav_fn[file_idx]}")
+            spk_wav = np.fromfile(self.spk_wav_fn[file_idx], dtype=np.int32).reshape(-1, 20, 4)
             self.spk_peak_ch, self.spk_time, self.electrode_group = spk_wav[..., 0, 1], spk_wav[..., 0, 2], spk_wav[..., 0, 3]
             self.spk_wav = spk_wav[..., 1:, :] / (2**self.binary_radix) * self.uV_per_bit
     
-    def load_fet(self):
+    def load_fet(self, file_idx=0):
         if self.fet_fn:
+            print(f"ephys.BMI.load_fet: Loading {self.fet_fn[file_idx]}")
             scale_factor = float(2**self.binary_radix) / self.uV_per_bit
 
-            file_size = os.stat(self.fet_fn).st_size
+            file_size = os.stat(self.fet_fn[file_idx]).st_size
             if file_size // 4 % 8 == 0:
                 n_col = 8
             elif file_size // 4 % 7 == 0:
@@ -117,7 +242,7 @@ class BMI:
             else:
                 raise ValueError(f'Unsupported fet file size: {file_size}')
 
-            fet = np.fromfile(self.fet_fn, dtype=np.int32).reshape(-1, n_col)
+            fet = np.fromfile(self.fet_fn[file_idx], dtype=np.int32).reshape(-1, n_col)
             self.fet = pd.DataFrame({
                 'frame': fet[:, 0].astype(np.int64),
                 'group_id': fet[:, 1],
@@ -140,9 +265,10 @@ class BMI:
 
             # TODO: If frame rolls over, add 2^32 to the frame
     
-    def load_model(self):
-        if os.path.exists(self.model_fn):
-            self.model = pd.read_pickle(self.model_fn)
+    def load_model(self, file_idx=0):
+        if self.model_fn and len(self.model_fn) > file_idx:
+            print(f"ephys.BMI.load_model: Loading {self.model_fn[file_idx]}")
+            self.model = pd.read_pickle(self.model_fn[file_idx])
 
     def load_nidq(self, path=None):
         """
@@ -152,31 +278,41 @@ class BMI:
         ----------
         path : str, optional
             Path to the nidq meta file, by default None
+
+        Note
+        ----
+        - There can be multiple nidq files in the session folder.
+        - 
         """
         if path is None:
             path = self.path
 
-        self.nidq_fn = finder(path, pattern=r'\.nidq.meta$', ask=False)[0]
-        print(f"bmi.BMI.load_nidq: Loading {self.nidq_fn}")
-        if os.path.exists(self.nidq_fn):
-            self.nidq = read_digital(self.nidq_fn)
+        self.nidq_fn = finder(path, pattern=r'\.nidq.meta$', ask=False)
+        n_fn = len(self.nidq_fn)
+        self.nidq = [None] * n_fn
+        self.time_sync_nidq = [None] * n_fn
+        self.time_sync_nidq_off = [None] * n_fn
+        for i, fn in enumerate(self.nidq_fn):
+            print(f"bmi.BMI.load_nidq: Loading {fn}")
+            if os.path.exists(fn):
+                self.nidq[i] = read_digital(fn)
 
-
-            self.time_sync_nidq = self.nidq.query("chan==4 and type==1").time.values
-            self.time_sync_nidq_off = self.nidq.query("chan==4 and type==0").time.values
-            print(f"bmi.BMI.load_nidq: Found {len(self.time_sync_nidq)} sync pulses")
-            pulse_duration = self.time_sync_nidq_off - self.time_sync_nidq
-            if pulse_duration.min() < 0.090:
-                print(f"bmi.BMI.load_nidq: Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
-            
-            if self.check_sync():
-                self.nidq['time_fpga'] = self.nidq_to_fpga(self.nidq.time.values)
+                self.time_sync_nidq[i] = self.nidq[i].query("chan==4 and type==1").time.values
+                self.time_sync_nidq_off[i] = self.nidq[i].query("chan==4 and type==0").time.values
+                print(f"bmi.BMI.load_nidq: Found {len(self.time_sync_nidq[i])} sync pulses")
+                pulse_duration = self.time_sync_nidq_off[i] - self.time_sync_nidq[i]
+                if pulse_duration.min() < 0.090:
+                    print(f"bmi.BMI.load_nidq: Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
+                
+                if self.check_sync(i):
+                    self.nidq[i]['time_fpga'] = self.nidq_to_fpga[i](self.nidq[i].time.values)
         
     def save_nidq(self, path=None):
         if path is None:
             path = self.path
         
-        self.nidq.to_pickle(os.path.join(path, 'nidq.pd'))
+        for i, fn in enumerate(self.nidq_fn):
+            self.nidq[i].to_pickle(os.path.join(path, 'nidq.pd'))
 
     def check_sync(self):
         n_sync = len(self.time_sync_nidq)
