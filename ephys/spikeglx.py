@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd 
 import matplotlib.pyplot as plt
 
-from .utils import finder
+from .utils import finder, tprint
 
 def read_analog(
     filename: str,
@@ -174,38 +174,9 @@ def read_bin(filename: str, n_channel: int = 385, dtype: str = 'int16',
     offset = int(sample_range[0]) * int(n_channel) * np.dtype(dtype).itemsize
     n_sample = int(sample_range[1]) - int(sample_range[0])
 
-    print(f"spikeglx.read_bin: Loading {filename}... range={sample_range}, n_sample={n_sample}, offset={offset}")
+    tprint(f"Loading {filename}, range={sample_range}, n_sample={n_sample}, offset={offset}")
     data = np.memmap(filename, dtype=dtype, mode='r', shape=(n_sample, n_channel), offset=offset)
     return np.ascontiguousarray(data[:, channel_idx])
-
-
-def get_probe(meta: dict) -> dict:
-    """
-    Create a dictionary to track probe information for Kilosort4.
-
-    Parameters
-    ----------
-    meta : dict
-        Dictionary containing metadata information.
-
-    Returns
-    -------
-    dict
-        Dictionary with the following keys, all corresponding to NumPy ndarrays:
-        'chanMap': the channel indices that are included in the data.
-        'xc':      the x-coordinates (in micrometers) of the probe contact centers.
-        'yc':      the y-coordinates (in micrometers) of the probe contact centers.
-        'kcoords': shank or channel group of each contact (not used yet, set all to 0).
-        'n_chan':  the number of channels.
-    """
-    probe_info = {
-        'chanMap': np.array([i['channel'] for i in meta['snsChanMap']['channel_map']], dtype=np.int32)[get_channel_idx(meta)],
-        'xc': np.array([i['x'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
-        'yc': np.array([i['z'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
-        'kcoords': np.array([i['shank'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
-        'n_chan': np.array(meta['nSavedChans'], dtype=np.float32)
-    }
-    return probe_info
 
 
 def read_meta(filename):

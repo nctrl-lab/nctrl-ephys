@@ -31,5 +31,8 @@ def saveks(path):
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
-def spiketag(path):
-    pass
+def savebmi(path):
+    from .bmi import BMI
+    bmi = BMI(path)
+    bmi.save_mua()
+    bmi.save_nidq()
