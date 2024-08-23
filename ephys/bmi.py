@@ -90,7 +90,7 @@ class BMI:
                 self.channel_position = np.full((self.n_channel, 2), np.nan)
                 for i, (key, value) in enumerate(prb['pos'].items()):
                     self.channel_id[i] = int(key)
-                    self.channel_position[int(key), :] = value
+                    self.channel_position[i] = value
                 
                 self.channel_position[:, 0] -= np.nanmin(self.channel_position[:, 0])
                 self.channel_position[:, 0] *= 2
@@ -177,6 +177,8 @@ class BMI:
 
         self.channel_id_saved = self.channel_id[channel_idx]
         self.n_channel_saved = len(self.channel_id_saved)
+        self.channel_position_saved = self.channel_position[channel_idx, :]
+        self.shank_saved = self.shank[channel_idx]
 
         if hasattr(self, 'mua_fn') and len(self.mua_fn) > 1:
             self.mua_fn = inquirer.checkbox(message="Select files to merge (files are ordered by time)", choices=self.mua_fn, default=self.mua_fn)
@@ -195,10 +197,16 @@ class BMI:
                 tprint(f"Processing {fn}")
                 start_time = time.time()
 
-                # 48.56 seconds preallocate (fastest but takes huge memory)
-                data = np.memmap(fn, dtype='int16', mode='r', shape=(self.n_sample[i], 2*self.n_channel))
+                # 16.20 seconds preallocate (fastest but takes huge memory)
+                # data = np.memmap(fn, dtype='int16', mode='r', shape=(self.n_sample[i], 2*self.n_channel))
+                # output_buffer = np.empty((self.n_sample[i], len(self.channel_id_saved)), dtype=np.int16)
+                # np.copyto(output_buffer, data[:, 2*self.channel_id_saved-1])
+                # output_buffer.tofile(f)
+
+                # 18.45 seconds preallocate (fastest but takes huge memory)
+                data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], self.n_channel))
                 output_buffer = np.empty((self.n_sample[i], len(self.channel_id_saved)), dtype=np.int16)
-                np.copyto(output_buffer, data[:, 2*self.channel_id_saved])
+                np.right_shift(data[:, self.channel_id_saved], 13, out=output_buffer)
                 output_buffer.tofile(f)
 
                 # 174.76 seconds
@@ -221,11 +229,6 @@ class BMI:
                 #             break
                 #         chunk.view(np.int16)[1::2].tofile(f)
 
-                # 50.45 seconds preallocate (fastest but takes huge memory)
-                # data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], self.n_channel))
-                # output_buffer = np.empty((self.n_sample[i], len(self.channel_id_saved)), dtype=np.int16)
-                # np.right_shift(data[:, self.channel_id_saved], 13, out=output_buffer)
-                # output_buffer.tofile(f)
 
                 # 151.59 seconds (super slow...)
                 # data = np.memmap(fn, dtype='int16', mode='r', shape=(self.n_sample[i], 2*self.n_channel))
@@ -261,10 +264,10 @@ class BMI:
             "fileSizeBytes": filesize,
             "fileTimeSecs": f"{filetimesecs:.3f}",
             "firstSample": "0",
-            "imAiRangeMax": "0.639",
-            "imAiRangeMin": "-0.639",
+            "imAiRangeMax": "1.22683392",
+            "imAiRangeMin": "-1.22683392",
             "imChan0apGain": "192",
-            "imMaxInt": "32768",
+            "imMaxInt": str(2**15),
             "imSampRate": self.sample_rate,
             "nSavedChans": self.n_channel_saved,
             "snsApLfSy": f"{self.n_channel_saved},0,0",
@@ -281,21 +284,19 @@ class BMI:
 
     def get_imrotbl(self):
         imrotbl = f"(0,{self.n_channel_saved})"
-        for channel, shank in zip(self.channel_id_saved, self.shank):
+        for channel, shank in enumerate(self.shank_saved):
             imrotbl += f"({channel} {shank} 0 192 80 1)"
         return imrotbl
 
     def get_snschanmap(self):
         snschanmap = f"({self.n_channel_saved},0,0)"
-        for i, channel in enumerate(self.channel_id_saved):
-            snschanmap += f"(AP{channel};{channel}:{i})"
+        for i in range(self.n_channel_saved):
+            snschanmap += f"(AP{i};{i}:{i})"
         return snschanmap
 
     def get_snsgeommap(self):
-        shanks = self.shank[self.channel_id_saved]
-        positions = self.channel_position[self.channel_id_saved, :]
-        snsgeommap = f"(FPGABMI,{np.unique(shanks).size},200,70)"
-        for i, (shank, position) in enumerate(zip(shanks, positions)):
+        snsgeommap = f"(FPGABMI,{np.unique(self.shank_saved).size},200,70)"
+        for i, (shank, position) in enumerate(zip(self.shank_saved, self.channel_position_saved)):
             snsgeommap += f"({shank}:{int(position[0])}:{int(position[1])}:{int(not np.isnan(position[0]))})"
         return snsgeommap
 
@@ -472,8 +473,8 @@ class BMI:
 
 if __name__ == '__main__':
     bmi = BMI('C:\\SGL_DATA')
+    # bmi.plot_prb()
     bmi.save_mua()
-    breakpoint()
     # bmi.load_spk()
     # bmi.load_spk_wav()
     # bmi.load_fet()

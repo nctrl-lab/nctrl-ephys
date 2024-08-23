@@ -4,6 +4,7 @@ from typing import Union, Tuple, Optional
 import numpy as np
 import pandas as pd 
 import matplotlib.pyplot as plt
+from matplotlib.widgets import Slider
 
 from .utils import finder, tprint
 
@@ -65,6 +66,50 @@ def read_analog(
     data = read_bin(bin_fn, n_channel, dtype, channel_idx, sample_range)
 
     return data * uV_per_bit[channel_idx][np.newaxis, :]
+
+
+def plot_analog(filename, channel_idx=None, initial_sample_range=(5000, 10000), initial_gap=100):
+    def update_plot(start, window_size, gap):
+        ax.clear()
+        data = read_analog(filename, channel_idx=channel_idx, sample_range=(start, start + window_size))
+        # data -= np.median(data, axis=0, keepdims=True)
+        # data -= np.median(data, axis=1, keepdims=True)
+        ax.plot(np.arange(start, start + window_size)[:, np.newaxis], 
+                data + np.arange(data.shape[1]) * gap, 
+                color='k', linewidth=0.5)
+        ax.set_xlabel('Samples')
+        ax.set_ylabel('Channel')
+        ax.set_title('Raw data')
+        ax.set_yticks(np.arange(0, data.shape[1] * gap, 4*gap))
+        ax.set_yticklabels(channel_idx if channel_idx is not None else range(0, data.shape[1], 4))
+        ax.set_xlim(start, start + window_size)
+        ax.set_ylim(-gap, data.shape[1] * gap + gap)
+        fig.canvas.draw_idle()
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+    plt.subplots_adjust(bottom=0.25)
+
+    initial_window_size = initial_sample_range[1] - initial_sample_range[0]
+    update_plot(initial_sample_range[0], initial_window_size, initial_gap)
+
+    meta = read_meta(filename)
+    n_sample = meta['fileSizeBytes'] // meta['nSavedChans'] // 2
+
+    axstart = plt.axes([0.1, 0.05, 0.8, 0.03])
+    axwindow = plt.axes([0.1, 0.1, 0.8, 0.03])
+    axgap = plt.axes([0.1, 0.15, 0.8, 0.03])
+    sstart = Slider(axstart, 'Time start', 0, n_sample - initial_window_size, valinit=initial_sample_range[0], valstep=2500)
+    swindow = Slider(axwindow, 'Time window', 2500, 60000, valinit=initial_window_size, valstep=2500)
+    sgap = Slider(axgap, 'Y scale', 25, 500, valinit=initial_gap, valstep=25)
+
+    def update(val):
+        update_plot(int(sstart.val), int(swindow.val), int(sgap.val))
+
+    sstart.on_changed(update)
+    swindow.on_changed(update)
+    sgap.on_changed(update)
+
+    plt.show()
 
 
 def read_digital(filename, dtype='uint16'):
@@ -516,17 +561,4 @@ if __name__ == '__main__':
     fn = finder("C:\\SGL_DATA")
     # meta = read_meta(fn)
     # data = read_digital(fn)
-    data = read_analog(fn, sample_range=(0, 3000))
-    
-    # denoise data
-    # subtract median of each channel
-    data -= np.median(data, axis=0, keepdims=True)
-    # subtract median of each time sample from all channels (do not use for LFP data)
-    data -= np.median(data, axis=1, keepdims=True)
-
-    plt.imshow(data.T, aspect='auto', interpolation='none')
-    plt.colorbar()
-    plt.title('Raw Data')
-    plt.xlabel('Time (samples)')
-    plt.ylabel('Channel')
-    plt.show()
+    plot_analog(fn)

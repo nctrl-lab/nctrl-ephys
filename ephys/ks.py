@@ -4,7 +4,7 @@ import pandas as pd
 import scipy.io as sio
 
 from .utils import finder, confirm
-from .spikeglx import read_meta, read_analog, get_uV_per_bit
+from .spikeglx import read_meta, read_analog, get_uV_per_bit, get_channel_idx
 
 
 def run_ks4(path=None, settings=None):
@@ -237,10 +237,10 @@ class Spike():
 
 
 if __name__ == "__main__":
-    fn = finder("C:\\SGL_DATA", "params.py$")
-    fd = os.path.dirname(fn)
-    spike = Spike(fd)
-    spike.save()
+    # fn = finder("C:\\SGL_DATA", "params.py$")
+    # fd = os.path.dirname(fn)
+    # spike = Spike(fd)
+    # spike.save()
 
     # import matplotlib.pyplot as plt
     # fig, axs = plt.subplots(4, 4)
@@ -249,3 +249,6 @@ if __name__ == "__main__":
     #     axs[i].imshow(spike.waveform_raw[i, :, :].T)
 
     # run_ks4("C:\\SGL_DATA")
+    fn = finder("C:\\SGL_DATA")
+    meta = read_meta(fn)
+    info = get_probe(meta)
