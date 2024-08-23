@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import time
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -180,15 +181,64 @@ class BMI:
         if hasattr(self, 'mua_fn') and len(self.mua_fn) > 1:
             self.mua_fn = inquirer.checkbox(message="Select files to merge (files are ordered by time)", choices=self.mua_fn, default=self.mua_fn)
 
+        self.save_catgt()
+        
+        if os.path.exists(self.output_fn):
+            if inquirer.confirm("Redo saving?", default=False):
+                os.remove(self.output_fn)
+            else:
+                print("The file is already saved. Exiting.")
+                return
+
         with open(output_fn, 'wb') as f:
             for i, fn in enumerate(self.mua_fn):
-                bin_data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], 160))
-                bin_data = np.right_shift(bin_data[:, self.channel_id_saved], 13).astype(np.int16)
+                tprint(f"Processing {fn}")
+                start_time = time.time()
 
-                tprint("Saving {}".format(fn))
-                bin_data.tofile(f)
+                # 48.56 seconds preallocate (fastest but takes huge memory)
+                data = np.memmap(fn, dtype='int16', mode='r', shape=(self.n_sample[i], 2*self.n_channel))
+                output_buffer = np.empty((self.n_sample[i], len(self.channel_id_saved)), dtype=np.int16)
+                np.copyto(output_buffer, data[:, 2*self.channel_id_saved])
+                output_buffer.tofile(f)
 
-        self.save_catgt()
+                # 174.76 seconds
+                # with open(fn, 'rb') as source_file:
+                #     chunk_size = 160 * 1024 * 1024  # 160 MB chunks (160M * 4 bytes for int32)
+                #     while True:
+                #         chunk = np.fromfile(source_file, dtype='int32', count=chunk_size)
+                #         if chunk.size == 0:
+                #             break
+                #         chunk = chunk.reshape(-1, self.n_channel)[:, self.channel_id_saved]
+                #         chunk = np.right_shift(chunk, 13).astype(np.int16)
+                #         chunk.tofile(f)
+
+                # 140.90 seconds
+                # with open(fn, 'rb') as source_file:
+                #     chunk_size = 160 * 1024 * 1024  # 160 MB chunks
+                #     while True:
+                #         chunk = np.fromfile(source_file, dtype='int32', count=chunk_size)
+                #         if chunk.size == 0:
+                #             break
+                #         chunk.view(np.int16)[1::2].tofile(f)
+
+                # 50.45 seconds preallocate (fastest but takes huge memory)
+                # data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], self.n_channel))
+                # output_buffer = np.empty((self.n_sample[i], len(self.channel_id_saved)), dtype=np.int16)
+                # np.right_shift(data[:, self.channel_id_saved], 13, out=output_buffer)
+                # output_buffer.tofile(f)
+
+                # 151.59 seconds (super slow...)
+                # data = np.memmap(fn, dtype='int16', mode='r', shape=(self.n_sample[i], 2*self.n_channel))
+                # data[:, 1::2].tofile(f)
+
+                # 133.88 seconds memmap
+                # data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], self.n_channel))
+                # np.right_shift(data[:, self.channel_id_saved], 13).astype(np.int16).tofile(f)
+                # del data  # Close the memmap
+
+                end_time = time.time()
+                duration = end_time - start_time
+                tprint(f"Finished saving {fn} in {duration:.2f} seconds ({os.path.getsize(fn) / 1024**2 / duration:.2f} MB/s)")
         self.save_meta()
 
     def save_meta(self):
@@ -217,9 +267,9 @@ class BMI:
             "imMaxInt": "32768",
             "imSampRate": self.sample_rate,
             "nSavedChans": self.n_channel_saved,
-            "snsApLfSy": f"{self.n_channel_saved},0,1",
+            "snsApLfSy": f"{self.n_channel_saved},0,0",
             "snsSaveChanSubset": f"0:{self.n_channel_saved}",
-            "typeThis": "bmi",
+            "typeThis": "imec",
             "~imroTbl": self.get_imrotbl(),
             "~snsChanMap": self.get_snschanmap(),
             "~snsGeomMap": self.get_snsgeommap()
@@ -231,7 +281,7 @@ class BMI:
 
     def get_imrotbl(self):
         imrotbl = f"(0,{self.n_channel_saved})"
-        for i, channel, shank in enumerate(zip(self.channel_id_saved, self.shank)):
+        for channel, shank in zip(self.channel_id_saved, self.shank):
             imrotbl += f"({channel} {shank} 0 192 80 1)"
         return imrotbl
 
@@ -246,7 +296,7 @@ class BMI:
         positions = self.channel_position[self.channel_id_saved, :]
         snsgeommap = f"(FPGABMI,{np.unique(shanks).size},200,70)"
         for i, (shank, position) in enumerate(zip(shanks, positions)):
-            snsgeommap += f"({shank}:{position[0]}:{position[1]}:{int(not np.isnan(position[0]))})"
+            snsgeommap += f"({shank}:{int(position[0])}:{int(position[1])}:{int(not np.isnan(position[0]))})"
         return snsgeommap
 
     def save_catgt(self):

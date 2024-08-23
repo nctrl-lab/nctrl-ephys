@@ -513,8 +513,7 @@ def plot_chanmap(filename):
 
 
 if __name__ == '__main__':
-    fd = os.path.join(os.path.expanduser('~'), 'Dropbox (HHMI)', 'data')
-    fn = finder(fd)
+    fn = finder("C:\\SGL_DATA")
     # meta = read_meta(fn)
     # data = read_digital(fn)
     data = read_analog(fn, sample_range=(0, 3000))
