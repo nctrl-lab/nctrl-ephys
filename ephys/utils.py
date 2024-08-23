@@ -1,11 +1,17 @@
 import os
 import re
+import datetime
 from typing import Optional, Union, List
 
 from IPython import get_ipython
 import tkinter as tk
 from tkinter import filedialog
 import inquirer
+
+
+def tprint(text):
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    print(f'[{timestamp}] {text}')
 
 
 def finder(path: Optional[str] = None,

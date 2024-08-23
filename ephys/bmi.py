@@ -5,11 +5,12 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import inquirer
 
 from scipy.interpolate import interp1d
 from scipy.stats import linregress
 
-from .utils import finder
+from .utils import finder, tprint
 from .spikeglx import read_bin, read_digital
 
 class BMI:
@@ -44,6 +45,7 @@ class BMI:
         if not path or not os.path.exists(path):
             raise ValueError(f'Path {path} does not exist')
         self.path = path
+        self.session_name = os.path.basename(path)
 
         self.file_patterns = {
             'prb': r'\.prb$',
@@ -79,7 +81,7 @@ class BMI:
     def load_prb(self):
         if self.prb_fn:
             with open(self.prb_fn[0], 'r') as f:
-                print(f"ephys.BMI.load_prb: Loading {self.prb_fn[0]}")
+                tprint(f"Loading {self.prb_fn[0]}")
                 prb = json.load(f)
                 self.n_channel = prb['params']['n_ch']
                 self.sample_rate = float(prb['params']['fs'])
@@ -88,6 +90,12 @@ class BMI:
                 for i, (key, value) in enumerate(prb['pos'].items()):
                     self.channel_id[i] = int(key)
                     self.channel_position[int(key), :] = value
+                
+                self.channel_position[:, 0] -= np.nanmin(self.channel_position[:, 0])
+                self.channel_position[:, 0] *= 2
+
+                _, self.shank = np.unique(self.channel_position[:, 0], return_inverse=True)
+                self.shank[np.isnan(self.channel_position[:, 0])] = -1
     
     def plot_prb(self):
         _, ax = plt.subplots(figsize=(6, 8))
@@ -123,14 +131,125 @@ class BMI:
         Theoretical Maximum Voltage (+/- 15 bits): 2**15 * 0.195 = +/- 6.390 mV
         Voltage Step Size of ADC (Least Significant Bit): 0.195 uV
         """
-        print(f"ephys.BMI.load_mua: Loading {self.mua_fn[file_idx]}")
+        tprint(f"Loading {self.mua_fn[file_idx]}")
         selected_channel = self.channel_id[channel_idx]
         data = read_bin(self.mua_fn[file_idx], n_channel=self.n_channel, dtype='int32', 
                         channel_idx=selected_channel, sample_range=sample_range)
 
         return data / (2 ** self.binary_radix) * self.uV_per_bit if scale else data
     
+    def save_mua(self, channel_idx=slice(0, 128), output_path=None):
+        """
+        Concatenate mua data to an int16 binary file.
+
+        This method loads the MUA (Multi-Unit Activity) data from the original file(s),
+        converts it to int16 format, and saves it to a single binary file. This is 
+        typically done to prepare the data for spike sorting algorithms like Kilosort.
+
+        Parameters:
+        -----------
+        channel_idx : slice or list, optional
+            The channels to load. If not provided, the first 128 channels are loaded.
+        output_path : str, optional
+            The path where the concatenated int16 binary file will be saved.
+            If not provided, it defaults to a 'kilosort' subdirectory in the current path.
+
+        Notes:
+        ------
+        - The method assumes that the original data is in int32 format and needs to be 
+          converted to int16.
+        - The conversion process involves bit-shifting and scaling to preserve the 
+          signal quality while reducing the file size.
+        - uV/bit will be 1.56 for Intan RHD2000 series (if the right_shift is 13 bits).
+        - Considering Neuropixels 2.0's uV/bit is 3.784 (12 bits, range -2048 to 2047, +/- 2**11), this scaling factor is reasonable.
+        """
+        if self.mua_fn is None:
+            raise ValueError("No MUA files found")
+
+        if output_path is None:
+            output_path = os.path.join(self.path, 'kilosort')
+            output_fn = os.path.join(output_path, f'{self.session_name}_tcat.bmi.ap.bin')
+            if not os.path.exists(output_path):
+                os.makedirs(output_path)
+        self.output_path = output_path
+        self.output_fn = output_fn
+
+        self.channel_id_saved = self.channel_id[channel_idx]
+        self.n_channel_saved = len(self.channel_id_saved)
+
+        if hasattr(self, 'mua_fn') and len(self.mua_fn) > 1:
+            self.mua_fn = inquirer.checkbox(message="Select files to merge (files are ordered by time)", choices=self.mua_fn, default=self.mua_fn)
+
+        with open(output_fn, 'wb') as f:
+            for i, fn in enumerate(self.mua_fn):
+                bin_data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], 160))
+                bin_data = np.right_shift(bin_data[:, self.channel_id_saved], 13).astype(np.int16)
+
+                tprint("Saving {}".format(fn))
+                bin_data.tofile(f)
+
+        self.save_catgt()
+        self.save_meta()
+
     def save_meta(self):
+        """
+        Save a metadata file.
+        """
+        fn = self.output_fn
+        filesize = os.path.getsize(fn)
+        n_sample = np.array(filesize) // 2 // self.n_channel_saved 
+        filetime = datetime.fromtimestamp(os.path.getmtime(fn)).strftime("%Y-%m-%dT%H:%M:%S")
+        filetime_orig = datetime.fromtimestamp(os.path.getmtime(self.mua_fn[0])).strftime("%Y-%m-%dT%H:%M:%S")
+        filetimesecs = n_sample / self.sample_rate
+
+        metadata = {
+            "acqApLfSy": f"{self.n_channel_saved},0,0",
+            "fileCreateTime": filetime,
+            "fileCreateTime_original": filetime_orig,
+            "fileName": self.output_fn,
+            "fileSHA1": "0",
+            "fileSizeBytes": filesize,
+            "fileTimeSecs": f"{filetimesecs:.3f}",
+            "firstSample": "0",
+            "imAiRangeMax": "0.639",
+            "imAiRangeMin": "-0.639",
+            "imChan0apGain": "192",
+            "imMaxInt": "32768",
+            "imSampRate": self.sample_rate,
+            "nSavedChans": self.n_channel_saved,
+            "snsApLfSy": f"{self.n_channel_saved},0,1",
+            "snsSaveChanSubset": f"0:{self.n_channel_saved}",
+            "typeThis": "bmi",
+            "~imroTbl": self.get_imrotbl(),
+            "~snsChanMap": self.get_snschanmap(),
+            "~snsGeomMap": self.get_snsgeommap()
+        }
+
+        with open(os.path.splitext(fn)[0] + '.meta', 'w') as f:
+            for key, value in metadata.items():
+                f.write(f'{key}={value}\n')
+
+    def get_imrotbl(self):
+        imrotbl = f"(0,{self.n_channel_saved})"
+        for i, channel, shank in enumerate(zip(self.channel_id_saved, self.shank)):
+            imrotbl += f"({channel} {shank} 0 192 80 1)"
+        return imrotbl
+
+    def get_snschanmap(self):
+        snschanmap = f"({self.n_channel_saved},0,0)"
+        for i, channel in enumerate(self.channel_id_saved):
+            snschanmap += f"(AP{channel};{channel}:{i})"
+        return snschanmap
+
+    def get_snsgeommap(self):
+        shanks = self.shank[self.channel_id_saved]
+        positions = self.channel_position[self.channel_id_saved, :]
+        snsgeommap = f"(FPGABMI,{np.unique(shanks).size},200,70)"
+        for i, (shank, position) in enumerate(zip(shanks, positions)):
+            snsgeommap += f"({shank}:{position[0]}:{position[1]}:{int(not np.isnan(position[0]))})"
+        return snsgeommap
+
+    def save_catgt(self):
         """
         Save metadata to a csv file.
 
@@ -143,63 +262,22 @@ class BMI:
         - This method assumes that `self.mua_fn` contains the list of MUA binary file paths.
         - The CSV file is saved in the same directory as the MUA files, with the name 'meta.csv'.
         """
-
         mtime = [datetime.fromtimestamp(os.path.getmtime(x)).strftime("%Y%m%d_%H%M%S") for x in self.mua_fn]
         file_size = [os.path.getsize(x) for x in self.mua_fn]
         self.n_sample = [int(os.path.getsize(x) / (4 * self.n_channel)) for x in self.mua_fn]
         self.mua_start = np.concatenate([[0], np.cumsum(self.n_sample)[:-1]])
-        new_filesize = np.array(file_size) / 2 / self.n_channel * 128
+        # new_filesize = np.array(file_size) / 2 / self.n_channel * 128
 
-        df = pd.DataFrame({
+        self.catgt = pd.DataFrame({
             'filename': self.mua_fn,
             'mtime': mtime,
             'filesize': file_size,
-            'new_filesize': new_filesize,
             'n_sample': self.n_sample,
             'start': self.mua_start
         })
-        df.to_csv(os.path.join(self.path, 'meta.csv'), index=False)
-        print(f"Metadata saved to {os.path.join(self.path, 'meta.csv')}")
-    
-    def save_mua(self, output_path=None):
-        """
-        Concatenate mua data to an int16 binary file.
-
-        This method loads the MUA (Multi-Unit Activity) data from the original file(s),
-        converts it to int16 format, and saves it to a single binary file. This is 
-        typically done to prepare the data for spike sorting algorithms like Kilosort.
-
-        Parameters:
-        -----------
-        output_path : str, optional
-            The path where the concatenated int16 binary file will be saved.
-            If not provided, it defaults to a 'kilosort' subdirectory in the current path.
-
-        Notes:
-        ------
-        - The method assumes that the original data is in int32 format and needs to be 
-          converted to int16.
-        - Only the first 128 channels are typically used for spike sorting.
-        - The conversion process involves bit-shifting and scaling to preserve the 
-          signal quality while reducing the file size.
-        - uV/bit will be 1.56 for Intan RHD2000 series (13 bits, range -4096 to 4095, +/- 2**12).
-        - Considering Neuropixels 2.0's uV/bit is 3.784 (12 bits, range -2048 to 2047, +/- 2**11), this scaling factor is reasonable.
-        """
-        if output_path is None:
-            output_path = os.path.join(self.path, 'kilosort', 'mua_int16.bin')
-            if not os.path.exists(os.path.dirname(output_path)):
-                os.makedirs(os.path.dirname(output_path))
-
-        # TODO: load mua data and save as int16
-        with open(output_path, 'wb') as f:
-            for i, fn in enumerate(self.mua_fn):
-                bin_data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], 160))
-                bin_data = np.right_shift(bin_data[:, :128], 12).astype(np.int16)
-
-            # calculate read size
-            print("saving {}".format(bin_file[i_file]))
-            bin_data.tofile(f)
-        
+        fn = self.output_fn.replace('.bin', '.csv')
+        self.catgt.to_csv(fn, index=False)
+        tprint(f"Metadata saved to {fn}")
     
     def plot_mua(self, file_idx=0, channel_idx=slice(0, 128), sample_range=(5000, 10000)):
         data = self.load_mua(file_idx=file_idx, channel_idx=channel_idx, sample_range=sample_range)
@@ -217,21 +295,21 @@ class BMI:
 
     def load_spk(self, file_idx=0):
         if self.spk_fn:
-            print(f"ephys.BMI.load_spk: Loading {self.spk_fn[file_idx]}")
+            tprint(f"Loading {self.spk_fn[file_idx]}")
             spk = np.fromfile(self.spk_fn[file_idx], dtype='<i4').reshape(-1, 2)
             self.spk_frame = spk[:, 0]
             self.spk_channel = spk[:, 1]  # Note: not in physical order
     
     def load_spk_wav(self, file_idx=0):
         if self.spk_wav_fn:
-            print(f"ephys.BMI.load_spk_wav: Loading {self.spk_wav_fn[file_idx]}")
+            tprint(f"Loading {self.spk_wav_fn[file_idx]}")
             spk_wav = np.fromfile(self.spk_wav_fn[file_idx], dtype=np.int32).reshape(-1, 20, 4)
             self.spk_peak_ch, self.spk_time, self.electrode_group = spk_wav[..., 0, 1], spk_wav[..., 0, 2], spk_wav[..., 0, 3]
             self.spk_wav = spk_wav[..., 1:, :] / (2**self.binary_radix) * self.uV_per_bit
     
     def load_fet(self, file_idx=0):
         if self.fet_fn:
-            print(f"ephys.BMI.load_fet: Loading {self.fet_fn[file_idx]}")
+            tprint(f"Loading {self.fet_fn[file_idx]}")
             scale_factor = float(2**self.binary_radix) / self.uV_per_bit
 
             file_size = os.stat(self.fet_fn[file_idx]).st_size
@@ -257,17 +335,17 @@ class BMI:
 
             # Check for any potential issues in the loaded data
             if self.fet['frame'].diff().min() < 0:
-                print("\033[91mWarning: Time values are not monotonically increasing.\033[0m")
+                tprint("\033[91mWarning: Time values are not monotonically increasing.\033[0m")
             if np.any(np.isnan(self.fet.values)):
-                print("\033[91mWarning: NaN values detected in fet data.\033[0m")
+                tprint("\033[91mWarning: NaN values detected in fet data.\033[0m")
             if np.any(np.isinf(self.fet.values)):
-                print("\033[91mWarning: Infinite values detected in fet data.\033[0m")
+                tprint("\033[91mWarning: Infinite values detected in fet data.\033[0m")
 
             # TODO: If frame rolls over, add 2^32 to the frame
     
     def load_model(self, file_idx=0):
         if self.model_fn and len(self.model_fn) > file_idx:
-            print(f"ephys.BMI.load_model: Loading {self.model_fn[file_idx]}")
+            tprint(f"Loading {self.model_fn[file_idx]}")
             self.model = pd.read_pickle(self.model_fn[file_idx])
 
     def load_nidq(self, path=None):
@@ -282,7 +360,6 @@ class BMI:
         Note
         ----
         - There can be multiple nidq files in the session folder.
-        - 
         """
         if path is None:
             path = self.path
@@ -291,58 +368,64 @@ class BMI:
         n_fn = len(self.nidq_fn)
         self.nidq = [None] * n_fn
         self.time_sync_nidq = [None] * n_fn
-        self.time_sync_nidq_off = [None] * n_fn
         for i, fn in enumerate(self.nidq_fn):
-            print(f"bmi.BMI.load_nidq: Loading {fn}")
-            if os.path.exists(fn):
-                self.nidq[i] = read_digital(fn)
+            self.nidq[i] = read_digital(fn)
 
-                self.time_sync_nidq[i] = self.nidq[i].query("chan==4 and type==1").time.values
-                self.time_sync_nidq_off[i] = self.nidq[i].query("chan==4 and type==0").time.values
-                print(f"bmi.BMI.load_nidq: Found {len(self.time_sync_nidq[i])} sync pulses")
-                pulse_duration = self.time_sync_nidq_off[i] - self.time_sync_nidq[i]
-                if pulse_duration.min() < 0.090:
-                    print(f"bmi.BMI.load_nidq: Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
-                
-                if self.check_sync(i):
-                    self.nidq[i]['time_fpga'] = self.nidq_to_fpga[i](self.nidq[i].time.values)
+            self.time_sync_nidq[i] = self.nidq[i].query("chan==4 and type==1").time.values
+            time_sync_nidq_off = self.nidq[i].query("chan==4 and type==0").time.values
+            tprint(f"Found {len(self.time_sync_nidq[i])} sync pulses")
+
+            pulse_duration = time_sync_nidq_off - self.time_sync_nidq[i]
+            if pulse_duration.min() < 0.090:
+                tprint(f"Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
+            
+            self.nidq[i]['time_fpga'] = self.sync(self.time_sync_nidq[i])
         
     def save_nidq(self, path=None):
         if path is None:
             path = self.path
         
         for i, fn in enumerate(self.nidq_fn):
-            self.nidq[i].to_pickle(os.path.join(path, 'nidq.pd'))
+            if not hasattr(self, 'nidq'):
+                self.load_nidq()
 
-    def check_sync(self):
-        n_sync = len(self.time_sync_nidq)
+            tprint(f"Saving {fn}")
+            self.nidq[i].to_pickle(fn.replace('.nidq.meta', '.nidq.pd'))
+
+    def sync(self, time_sync_nidq):
+        n_sync = len(time_sync_nidq)
         time_sync_fpga = self.time_sync_fpga[:n_sync]
 
-        slope, intercept, r_value, _, _ = linregress(self.time_sync_nidq, time_sync_fpga)
+        # Check if the syncs are in linear relationship
+        slope, intercept, r_value, _, _ = linregress(time_sync_nidq, time_sync_fpga)
         r_squared = r_value**2
-        print(f"bmi.BMI.check_sync: Sync slope: {slope:.6f}, intercept: {intercept:.6f}, r-squared: {r_squared:.6f}")
-
         if r_squared < 0.98:
-            print("bmi.BMI.check_sync: Sync failed")
-            return False
+            tprint(f"Sync failed: slope {slope:.6f}, intercept {intercept:.6f}, r-squared {r_squared:.6f}")
+            return lambda x: x
+        tprint(f"Sync OK: slope {slope:.6f}, intercept {intercept:.6f}, r-squared {r_squared:.6f}")
 
-        print(f"bmi.BMI.check_sync: Sync OK")
-        sync_diff = self.time_sync_nidq * slope + intercept - time_sync_fpga
+        # Check if the syncs have any outliers
+        sync_diff = time_sync_nidq * slope + intercept - time_sync_fpga
         outlier = sync_diff >= 0.002  # 2 ms
-
         if outlier.sum() > 0:
             time_sync_fpga = time_sync_fpga[~outlier]
-            self.time_sync_nidq = self.time_sync_nidq[~outlier]
-            print(f"bmi.BMI.check_sync: Removed {outlier.sum()} outliers")
+            time_sync_nidq = time_sync_nidq[~outlier]
+            tprint(f"Removed {outlier.sum()} outliers")
 
-        self.nidq_to_fpga = interp1d(self.time_sync_nidq, time_sync_fpga, kind='linear', fill_value="extrapolate")
-        return True
+        # Check if there are enough sync points after removing outliers
+        if len(time_sync_nidq) < 2:
+            tprint("Not enough sync points after removing outliers. Using original linear regression.")
+            return lambda x: x * slope + intercept
 
+        # Return the function to convert nidq time to fpga time
+        return interp1d(time_sync_nidq, time_sync_fpga, kind='linear', fill_value="extrapolate")
 
 if __name__ == '__main__':
     bmi = BMI('C:\\SGL_DATA')
+    bmi.save_mua()
+    breakpoint()
     # bmi.load_spk()
     # bmi.load_spk_wav()
     # bmi.load_fet()
-    bmi.load_nidq()
-    bmi.save_nidq()
+    # bmi.load_nidq()
+    # bmi.save_nidq()

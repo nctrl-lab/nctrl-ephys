@@ -17,18 +17,18 @@ pip install git+https://github.com/nctrl-lab/nctrl-ephys.git
 - [phy](https://github.com/cortex-lab/phy)
 
 ## Pipelines
-- 1. Run SpikeGLX to record Neuropixels data
-- 2. Run CatGT (`ephys catgt`) to concatenate and denoise the data
-- 3. Run Kilosort (`ephys runks`)
-- 4. Run phy to curate the Kilosort results and save the result (`ephys saveks`)
-- 5. Extract the sync and event times data from SpikeGLX files (`ephys.spikeglx.read_digital`)
-- 6. Analyze the data (`ephys.spike`)
+1. Run SpikeGLX to record Neuropixels data
+2. Run CatGT (`ephys catgt`) to concatenate and denoise the data
+3. Run Kilosort (`ephys runks`)
+4. Run phy to curate the Kilosort results and save the result (`ephys saveks`)
+5. Extract the sync and event times data from SpikeGLX files (`ephys.spikeglx.read_digital`)
+6. Analyze the data (`ephys.spike`)
 
 ## Usage
 ### Command Line Interface
 The package provides a command-line interface (CLI) for various operations. Below are some examples:
 
-#### Running [CatGT](https://billkarsh.github.io/SpikeGLX/#catgt)
+#### Running CatGT
 ```bash
 ephys catgt --path /path/to/data
 ```
@@ -41,7 +41,7 @@ ephys runks --path /path/to/data
 - You can omit the `--path` option and the command will ask you the path to the data.
 
 #### Saving Kilosort Results
-- This command will generate a '.mat' file containing only the **good** units that were curated by [phy](https://github.com/cortex-lab/phy).
+- This command will generate a '.mat' file containing only the **good** units that were curated by phy.
 - This command also saves the waveform data by reading the raw '.bin' files (by default, it will read the first 60 seconds of data).
 
 ```bash

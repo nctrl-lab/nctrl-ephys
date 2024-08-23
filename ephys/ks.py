@@ -4,10 +4,10 @@ import pandas as pd
 import scipy.io as sio
 
 from .utils import finder, confirm
-from .spikeglx import read_meta, get_probe, read_analog, get_uV_per_bit
+from .spikeglx import read_meta, read_analog, get_uV_per_bit
 
 
-def run_ks4(path=None, settings=None, dtype='int16'):
+def run_ks4(path=None, settings=None):
     try:
         from kilosort import run_kilosort
     except ImportError:
@@ -23,13 +23,43 @@ def run_ks4(path=None, settings=None, dtype='int16'):
             if not confirm("Kilosort folder already exists. Do you want to run it again?"):
                 continue
 
+        settings['data_dir'] = os.path.dirname(fn)
+
         meta = read_meta(fn)
         if meta:
             probe = get_probe(meta)
             settings['n_chan_bin'] = meta['nSavedChans']
-            settings['data_dir'] = os.path.dirname(fn)
 
-        run_kilosort(settings=settings, probe=probe, data_dtype=dtype)
+        run_kilosort(settings=settings, probe=probe)
+
+
+def get_probe(meta: dict) -> dict:
+    """
+    Create a dictionary to track probe information for Kilosort4.
+
+    Parameters
+    ----------
+    meta : dict
+        Dictionary containing metadata information.
+
+    Returns
+    -------
+    dict
+        Dictionary with the following keys, all corresponding to NumPy ndarrays:
+        'chanMap': the channel indices that are included in the data.
+        'xc':      the x-coordinates (in micrometers) of the probe contact centers.
+        'yc':      the y-coordinates (in micrometers) of the probe contact centers.
+        'kcoords': shank or channel group of each contact (not used yet, set all to 0).
+        'n_chan':  the number of channels.
+    """
+    probe_info = {
+        'chanMap': np.array([i['channel'] for i in meta['snsChanMap']['channel_map']], dtype=np.int32)[get_channel_idx(meta)],
+        'xc': np.array([i['x'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
+        'yc': np.array([i['z'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
+        'kcoords': np.array([i['shank'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
+        'n_chan': np.array(meta['nSavedChans'], dtype=np.float32)
+    }
+    return probe_info
 
 
 class Spike():
