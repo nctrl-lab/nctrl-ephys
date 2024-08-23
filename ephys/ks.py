@@ -23,14 +23,13 @@ def run_ks4(path=None, settings=None):
             if not confirm("Kilosort folder already exists. Do you want to run it again?"):
                 continue
 
-        settings['data_dir'] = os.path.dirname(fn)
-
         meta = read_meta(fn)
         if meta:
             probe = get_probe(meta)
             settings['n_chan_bin'] = meta['nSavedChans']
+            settings['data_dir'] = os.path.dirname(fn)
 
-        run_kilosort(settings=settings, probe=probe)
+            run_kilosort(settings=settings, probe=probe)
 
 
 def get_probe(meta: dict) -> dict:
