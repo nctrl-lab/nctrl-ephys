@@ -435,6 +435,9 @@ class BMI:
     def save_nidq(self, path=None):
         if path is None:
             path = self.path
+
+        if not hasattr(self, 'nidq_fn') or not self.nidq_fn:
+            self.load_nidq(path)
         
         for i, fn in enumerate(self.nidq_fn):
             if not hasattr(self, 'nidq'):
