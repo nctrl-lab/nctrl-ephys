@@ -436,10 +436,10 @@ class BMI:
         if path is None:
             path = self.path
         
-        for i, fn in enumerate(self.nidq_fn):
-            if not hasattr(self, 'nidq'):
-                self.load_nidq()
+        if not hasattr(self, 'nidq_fn') or not hasattr(self, 'nidq'):
+            self.load_nidq()
 
+        for i, fn in enumerate(self.nidq_fn):
             tprint(f"Saving {fn}")
             self.nidq[i].to_pickle(fn.replace('.nidq.meta', '.nidq.pd'))
 
