@@ -78,7 +78,7 @@ class Spike():
 
     def load_meta(self):
         ops = np.load(os.path.join(self.path, 'ops.npy'), allow_pickle=True).item()
-        self.data_file_path_orig = str(ops['data_file_path'])
+        self.data_file_path_orig = str(ops.get('filename'))
         parent_folder = os.path.dirname(self.path)
         self.data_file_path = finder(parent_folder, 'ap.bin$', ask=False)[0]
 
