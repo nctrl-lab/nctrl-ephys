@@ -78,7 +78,7 @@ class Spike():
 
     def load_meta(self):
         ops = np.load(os.path.join(self.path, 'ops.npy'), allow_pickle=True).item()
-        self.data_file_path_orig = str(ops['data_file_path'])
+        self.data_file_path_orig = os.path.join(str(ops['data_dir']),str(ops['filename']))
         parent_folder = os.path.dirname(self.path)
         self.data_file_path = finder(parent_folder, 'ap.bin$', ask=False)[0]
 
@@ -105,10 +105,10 @@ class Spike():
         spike_templates = np.load(os.path.join(self.path, 'spike_templates.npy'))
         
         # Load cluster information
-        cluster_info = pd.read_csv(os.path.join(self.path, 'cluster_info.tsv'), sep='\t')
+        cluster_group = pd.read_csv(os.path.join(self.path, 'cluster_group.tsv'), sep='\t')
         
         # Get IDs of good clusters
-        good_id = cluster_info[cluster_info['group'] == 'good'].cluster_id.values
+        good_id = cluster_group[cluster_group['KSLabel'] == 'good'].cluster_id.values
         
         # Find the main template ID for each good cluster
         main_template_id = [np.bincount(spike_templates[cluster == c]).argmax() 
