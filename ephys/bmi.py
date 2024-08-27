@@ -430,7 +430,7 @@ class BMI:
             if pulse_duration.min() < 0.090:
                 tprint(f"Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
             
-            self.nidq[i]['time_fpga'] = self.sync(self.time_sync_nidq[i])
+            self.nidq[i]['time_fpga'] = self.sync(self.time_sync_nidq[i])(self.nidq[i]['time'])
         
     def save_nidq(self, path=None):
         if path is None:
@@ -474,9 +474,10 @@ class BMI:
 if __name__ == '__main__':
     bmi = BMI('C:\\SGL_DATA')
     # bmi.plot_prb()
-    bmi.save_mua()
+    # bmi.save_mua()
     # bmi.load_spk()
     # bmi.load_spk_wav()
     # bmi.load_fet()
     # bmi.load_nidq()
-    # bmi.save_nidq()
+    bmi.save_nidq()
+    breakpoint()
