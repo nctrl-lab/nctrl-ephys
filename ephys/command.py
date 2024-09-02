@@ -36,3 +36,9 @@ def savebmi(path):
     bmi = BMI(path)
     bmi.save_mua()
     bmi.save_nidq()
+
+@main.command()
+@click.option('--path', type=click.Path(exists=True), default=None)
+def savetdms(path):
+    from .tdms import save_tdms
+    save_tdms(path)
