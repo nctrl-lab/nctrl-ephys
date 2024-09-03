@@ -17,12 +17,13 @@ dependencies = [
     "prompt_toolkit >=3",
     "inquirer",
     "click",
+    "npTDMS"
 ]
 dynamic = ["version"]
 [tool.setuptools_scm]
 
 [project.urls]
-Homepage = "https://github.com/lapis42/nctrl-ephys"
+Homepage = "https://github.com/nctrl-lab/nctrl-ephys"
 
 [project.scripts]
 ephys = "ephys.command:main"
