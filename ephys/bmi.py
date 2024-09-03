@@ -11,7 +11,7 @@ import inquirer
 from scipy.interpolate import interp1d
 from scipy.stats import linregress
 
-from .utils import finder, tprint
+from .utils import finder, tprint, file_reorder
 from .spikeglx import read_bin, read_digital
 
 class BMI:
@@ -182,6 +182,8 @@ class BMI:
 
         if hasattr(self, 'mua_fn') and len(self.mua_fn) > 1:
             self.mua_fn = inquirer.checkbox(message="Select files to merge (files are ordered by time)", choices=self.mua_fn, default=self.mua_fn)
+        
+        self.mua_fn = file_reorder(self.mua_fn)
 
         self.save_catgt()
         

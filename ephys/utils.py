@@ -111,6 +111,59 @@ def confirm(message: str, default: bool = False) -> bool:
         return inquirer.confirm(message, default=default)
 
 
+class FileReorderApp:
+    def __init__(self, root, file_list):
+        self.root = root
+        self.root.title("Reorder Files")
+        self.root.geometry("600x480")
+        self.listbox = tk.Listbox(root, selectmode=tk.SINGLE)
+        self.listbox.pack(fill=tk.BOTH, expand=True)
+        
+        self.listbox.insert(tk.END, *file_list)
+        
+        button_frame = tk.Frame(root)
+        button_frame.pack(fill=tk.X)
+        
+        buttons = [
+            ("△", self.move_up, tk.LEFT),
+            ("▽", self.move_down, tk.LEFT),
+            ("Finish", self.save_order, tk.RIGHT)
+        ]
+        for text, command, side in buttons:
+            tk.Button(button_frame, text=text, command=command).pack(side=side, padx=5, pady=5)
+        
+        self.output = None
+    
+    def move_item(self, direction):
+        selected_indices = self.listbox.curselection()
+        if not selected_indices:
+            messagebox.showwarning("Warning", "No file selected")
+            return
+        
+        index = selected_indices[0]
+        if (direction == -1 and index == 0) or (direction == 1 and index == self.listbox.size() - 1):
+            return
+        
+        new_index = index + direction
+        self.listbox.insert(new_index, self.listbox.get(index))
+        self.listbox.delete(index if index < new_index else index + 1)
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(new_index)
+        self.listbox.see(new_index)
+    
+    move_up = lambda self: self.move_item(-1)
+    move_down = lambda self: self.move_item(1)
+    
+    def save_order(self):
+        self.output = tuple(self.listbox.get(0, tk.END))
+        self.root.destroy()
+
+def file_reorder(file_list):
+    root = tk.Tk()
+    app = FileReorderApp(root, file_list)
+    root.mainloop()
+    return app.output
+
 if __name__ == "__main__":
     # print(finder(folder=True, multiple=True, pattern=r'.bin$'))
     confirm("Are you sure you want to delete all files in this folder?")
