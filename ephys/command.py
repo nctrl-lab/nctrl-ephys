@@ -21,13 +21,13 @@ def runks(path):
 @click.option('--path', type=click.Path(exists=True), default=None)
 def saveks(path):
     from .utils import finder
-    from .ks import Spike
+    from .ks import Kilosort
     fn = finder(path, 'params.py$')
     if fn is None:
         raise ValueError('No params.py found in the directory')
     fd = os.path.dirname(fn)
-    spike = Spike(fd)
-    spike.save()
+    ks = Kilosort(fd)
+    ks.save()
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)

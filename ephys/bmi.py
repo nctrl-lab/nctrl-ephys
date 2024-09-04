@@ -8,10 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import inquirer
 
-from scipy.interpolate import interp1d
-from scipy.stats import linregress
-
-from .utils import finder, tprint, file_reorder
+from .utils import finder, tprint, file_reorder, sync
 from .spikeglx import read_bin, read_digital
 
 class BMI:
@@ -432,7 +429,8 @@ class BMI:
             if pulse_duration.min() < 0.090:
                 tprint(f"Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
             
-            self.nidq[i]['time_fpga'] = self.sync(self.time_sync_nidq[i])(self.nidq[i]['time'])
+            sync_func = sync(self.time_sync_nidq[i], self.time_sync_fpga)
+            self.nidq[i]['time_fpga'] = sync_func(self.nidq[i]['time'])
         
     def save_nidq(self, path=None):
         if path is None:
@@ -445,33 +443,6 @@ class BMI:
             tprint(f"Saving {fn}")
             self.nidq[i].to_pickle(fn.replace('.nidq.meta', '.nidq.pd'))
 
-    def sync(self, time_sync_nidq):
-        n_sync = len(time_sync_nidq)
-        time_sync_fpga = self.time_sync_fpga[:n_sync]
-
-        # Check if the syncs are in linear relationship
-        slope, intercept, r_value, _, _ = linregress(time_sync_nidq, time_sync_fpga)
-        r_squared = r_value**2
-        if r_squared < 0.98:
-            tprint(f"Sync failed: slope {slope:.6f}, intercept {intercept:.6f}, r-squared {r_squared:.6f}")
-            return lambda x: x
-        tprint(f"Sync OK: slope {slope:.6f}, intercept {intercept:.6f}, r-squared {r_squared:.6f}")
-
-        # Check if the syncs have any outliers
-        sync_diff = time_sync_nidq * slope + intercept - time_sync_fpga
-        outlier = sync_diff >= 0.002  # 2 ms
-        if outlier.sum() > 0:
-            time_sync_fpga = time_sync_fpga[~outlier]
-            time_sync_nidq = time_sync_nidq[~outlier]
-            tprint(f"Removed {outlier.sum()} outliers")
-
-        # Check if there are enough sync points after removing outliers
-        if len(time_sync_nidq) < 2:
-            tprint("Not enough sync points after removing outliers. Using original linear regression.")
-            return lambda x: x * slope + intercept
-
-        # Return the function to convert nidq time to fpga time
-        return interp1d(time_sync_nidq, time_sync_fpga, kind='linear', fill_value="extrapolate")
 
 if __name__ == '__main__':
     bmi = BMI('C:\\SGL_DATA')
