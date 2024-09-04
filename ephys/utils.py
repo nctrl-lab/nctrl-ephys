@@ -45,7 +45,7 @@ def finder(path: Optional[str] = None,
         os.path.join(root, filename)
         for root, _, filenames in os.walk(path)
         for filename in filenames
-        if re.search(pattern, filename)
+        if re.search(pattern, filename) and '.phy' not in root.split(os.path.sep)
     ]
 
     if folder:
@@ -166,24 +166,34 @@ def file_reorder(file_list):
     return app.output
 
 
-def savemat_safe(fn, key, value):
+def savemat_safe(fn, data):
     import scipy.io as sio
-    import os
+
+    if not isinstance(data, dict):
+        raise ValueError("data must be a dictionary")
 
     try:
         if os.path.exists(fn):
-            data = sio.loadmat(fn)
-            if not isinstance(data, dict):
+            data_old = sio.loadmat(fn)
+            if not isinstance(data_old, dict):
                 raise ValueError(f"File {fn} is not a dictionary")
-            if key in data and not confirm(f"{key} data already exists. Do you want to overwrite it?"):
+
+            overlap = False
+            for key in data.keys():
+                if key in data_old:
+                    overlap = True
+                    break
+            
+            if overlap and not confirm(f"Data {key} already exists. Do you want to overwrite it?"):
                 return
-            data[key] = value
-        else:
-            data = {key: value}
+            
+            data.update(data_old)
         
         sio.savemat(fn, data)
     except Exception as e:
         print(f"Error {'loading or ' if os.path.exists(fn) else ''}saving file {fn}: {str(e)}")
+        sio.savemat(fn, data_old)
+
 
 if __name__ == "__main__":
     # print(finder(folder=True, multiple=True, pattern=r'.bin$'))

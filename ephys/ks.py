@@ -112,6 +112,7 @@ class Kilosort():
         self.n_channel = self.meta['snsApLfSy']['AP']
         self.uV_per_bit = get_uV_per_bit(self.meta)
         self.sample_rate = self.meta.get('imSampRate') or self.meta.get('niSampRate') or 1
+        self.file_create_time = self.meta.get('fileCreateTime')
 
     def load_kilosort(self, load_all=False):
         """
@@ -297,6 +298,12 @@ class Kilosort():
             'channel_map': self.channel_map,
             'channel_position': self.channel_position,
             'cluster_group': self.cluster_group,
+            'meta': self.meta,
+            'n_channel': self.n_channel,
+            'file_create_time': self.file_create_time,
+            'data_file_path': self.data_file_path,
+            'data_file_path_orig': self.data_file_path_orig,
+            'sample_rate': self.sample_rate,
         }
 
         if self.waveform_raw is not None:
@@ -307,7 +314,7 @@ class Kilosort():
 
         fn = os.path.join(path, f'{self.session}_data.mat')
         tprint(f"Saving Kilosort data to {fn}")
-        savemat_safe(fn, 'spike', spike)
+        savemat_safe(fn, {'spike': spike})
 
     def plot(self, idx=0, xscale=1, yscale=1):
         """
