@@ -158,11 +158,32 @@ class FileReorderApp:
         self.output = tuple(self.listbox.get(0, tk.END))
         self.root.destroy()
 
+
 def file_reorder(file_list):
     root = tk.Tk()
     app = FileReorderApp(root, file_list)
     root.mainloop()
     return app.output
+
+
+def savemat_safe(fn, key, value):
+    import scipy.io as sio
+    import os
+
+    try:
+        if os.path.exists(fn):
+            data = sio.loadmat(fn)
+            if not isinstance(data, dict):
+                raise ValueError(f"File {fn} is not a dictionary")
+            if key in data and not confirm(f"{key} data already exists. Do you want to overwrite it?"):
+                return
+            data[key] = value
+        else:
+            data = {key: value}
+        
+        sio.savemat(fn, data)
+    except Exception as e:
+        print(f"Error {'loading or ' if os.path.exists(fn) else ''}saving file {fn}: {str(e)}")
 
 if __name__ == "__main__":
     # print(finder(folder=True, multiple=True, pattern=r'.bin$'))

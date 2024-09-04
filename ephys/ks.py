@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 import scipy.io as sio
 
-from .utils import finder, confirm
 from .spikeglx import read_meta, read_analog, get_uV_per_bit, get_channel_idx
+from .utils import finder, confirm, savemat_safe, tprint
 
 
 def run_ks4(path=None, settings=None):
@@ -60,8 +60,29 @@ def get_probe(meta: dict) -> dict:
     }
     return probe_info
 
+def nearest_channel(channel_position, channel_index, count=14):
+    """
+    Get the indices of the nearest channels for a given channel index.
 
-class Spike():
+    Parameters
+    ----------
+    channel_position : ndarray
+        Positions of channels on the probe (n_channel, 2).
+    channel_index : ndarray
+        Indices of channels.
+    count : int, optional
+        Number of nearest channels to get. Default is 14.
+
+    Returns
+    -------
+    ndarray
+        Indices of the nearest channels for each input channel, sorted by distance.
+    """
+    all_distances = np.linalg.norm(channel_position[:, np.newaxis] - channel_position, axis=2)
+    return np.argsort(all_distances, axis=1)[channel_index, :count]
+
+
+class Kilosort():
     def __init__(self, path=None):
         if path is None:
             fn = finder(None, 'params.py$')
@@ -92,25 +113,63 @@ class Spike():
         self.uV_per_bit = get_uV_per_bit(self.meta)
         self.sample_rate = self.meta.get('imSampRate') or self.meta.get('niSampRate') or 1
 
-    def load_kilosort(self):
-        print(f"ks.Spike.load_kilosort: Loading Kilosort data from {self.path}")
+    def load_kilosort(self, load_all=False):
+        """
+        Load Kilosort data from the specified path.
 
-        # Load spike times (in samples)
+        Parameters:
+        -----------
+        load_all : bool, optional
+            If True, load all clusters. If False, load only 'good' clusters. Default is False.
+
+        Attributes:
+        -----------
+        time : ndarray of object
+            Spike times in seconds.
+        frame : ndarray of object
+            Spike times in samples.
+        firing_rate : list
+            Firing rates.
+        position : ndarray
+            Median spike positions on the probe.
+
+        waveform : ndarray
+            Mean template waveforms across the nearest 14 channels (n_unit, 61, 14).
+        waveform_idx : ndarray
+            Channel indices for the 14 nearest channels (not actual channel numbers).
+        waveform_channel : ndarray
+            Actual channel numbers corresponding to the waveform sites (n_unit, 14).
+        waveform_position: ndarray
+            Channel positions on the probe for the 14 nearest channels (n_unit, 14, 2).
+        Vpp : ndarray
+            Peak-to-peak amplitude in arbitrary units.
+
+        n_unit : int
+            Number of good units (or all units if load_all is True).
+
+        cluster_group : ndarray
+            Group labels for all clusters (good, mua, noise, or nan).
+
+        channel_map : ndarray
+            Mapping of channel indices to physical channels.
+        channel_position : ndarray
+            Positions of all channels on the probe.
+        """
+        tprint(f"Loading Kilosort data from {self.path}")
+
+        # load spike_times, and unit_id
         frame = np.load(os.path.join(self.path, "spike_times.npy"))
-        
-        # Load spike-cluster assignments
         cluster = np.load(os.path.join(self.path, 'spike_clusters.npy'))
-        
-        # Load spike-template assignments
         spike_templates = np.load(os.path.join(self.path, 'spike_templates.npy'))
         
-        # Load cluster information
+        # manual clustering information
         cluster_info = pd.read_csv(os.path.join(self.path, 'cluster_info.tsv'), sep='\t')
+        self.cluster_group = cluster_info['group'].values
+        if not load_all:
+            good_id = cluster_info[cluster_info['group'] == 'good'].cluster_id.values
+        else:
+            good_id = np.unique(cluster)
         
-        # Get IDs of good clusters
-        good_id = cluster_info[cluster_info['group'] == 'good'].cluster_id.values
-        
-        # Find the main template ID for each good cluster
         main_template_id = [np.bincount(spike_templates[cluster == c]).argmax() 
                             for c in good_id]
 
@@ -125,14 +184,12 @@ class Spike():
 
         # Load and calculate mean spike positions for good clusters
         spike_positions = np.load(os.path.join(self.path, 'spike_positions.npy'))
-        self.position = np.array([spike_positions[cluster == c].mean(axis=0) 
+        self.position = np.array([np.median(spike_positions[cluster == c], axis=0) 
                                   for c in good_id])
     
         # Load templates and amplitudes
         templates = np.load(os.path.join(self.path, 'templates.npy'))
         amplitudes = np.load(os.path.join(self.path, 'amplitudes.npy'))
-        
-        # Unwhiten templates
         winv = np.load(os.path.join(self.path, 'whitening_mat_inv.npy'))
         temp_unwhitened = templates @ winv
         
@@ -141,25 +198,30 @@ class Spike():
 
         # Load channel map
         self.channel_map = np.load(os.path.join(self.path, 'channel_map.npy'))
-        
+        self.channel_position = np.load(os.path.join(self.path, 'channel_positions.npy'))
+
         # Find the best channel (waveform site) for each good cluster
-        self.waveform_site = max_channel[main_template_id]
-        
-        # Map waveform sites to actual channel numbers
-        self.max_channel = self.channel_map[self.waveform_site]
+        waveform_idx = max_channel[main_template_id]
+        self.waveform_idx = nearest_channel(self.channel_position, waveform_idx) # (n_unit, 14)
+        self.waveform_position = self.channel_position[self.waveform_idx] # (n_unit, 14, 2)
+
+        # Map waveform sites to actual channel numbers (n_unit, 14). This is needed for extracting waveforms from raw data.
+        self.waveform_channel = self.channel_map[self.waveform_idx]
         
         # Calculate mean waveforms for good clusters
-        waveform = np.zeros((self.n_unit, temp_unwhitened.shape[1], self.n_channel))
+        waveform = np.zeros((self.n_unit, temp_unwhitened.shape[1], 14))
         for i, c in enumerate(good_id):
             spikes = spike_templates[cluster == c]
             amplitudes_c = amplitudes[cluster == c].reshape(-1, 1, 1)
             mean_waveform = (temp_unwhitened[spikes] * amplitudes_c).mean(axis=0)
-            waveform[i, :, self.channel_map] = mean_waveform.T
+
+            # We don't know the exact scaling factor that was used by Kilosort, but it was approximately 10.
+            waveform[i] = mean_waveform[:, self.waveform_idx[i]] / 10
         self.waveform = waveform
     
-        self.Vpp = np.ptp(self.waveform, axis=(1, 2))  # peak-to-peak amplitude in uV
+        self.Vpp = np.ptp(self.waveform, axis=(1, 2))  # peak-to-peak amplitude in arbitrary unit
 
-    def load_waveforms(self, spk_range=(-20, 41), sample_range=(0, 30000*60)):
+    def load_waveforms(self, spk_range=(-20, 41), sample_range=(0, 30000*300)):
         """
         Load waveforms from the raw data file
         
@@ -196,51 +258,96 @@ class Spike():
 
         spk_width = spk_range[1] - spk_range[0]
 
-        spkwav = np.full((n_spk, spk_width, self.n_channel), np.nan)
+        spkwav = np.full((n_spk, spk_width, 14), np.nan)
         batch_indices = np.arange(n_batch)
         batch_starts = batch_indices * n_sample_per_batch + sample_range[0]
         batch_ends = np.minimum((batch_indices + 1) * n_sample_per_batch + sample_range[0], sample_range[1])
 
         for i_batch, (batch_start, batch_end) in enumerate(zip(batch_starts, batch_ends)):
-            print(f"ks.Spike.load_waveforms: Loading waveforms from {self.data_file_path} (batch {i_batch+1}/{n_batch})")
+            tprint(f"Loading waveforms from {self.data_file_path} (batch {i_batch+1}/{n_batch})")
             data = read_analog(self.data_file_path, sample_range=(batch_start, batch_end))
 
             in_range = (spks >= batch_start + spk_width) & (spks < batch_end - spk_width)
             spk = spks[in_range]
+            spk_idx = idx[in_range]
             spk_used[in_range] = True
             spk_no = np.where(in_range)[0]
-            for i, i_spk in zip(spk_no, spk):
-                spkwav_temp = data[i_spk + spk_range[0] - batch_start:i_spk + spk_range[1] - batch_start, :]
+            for i, i_spk, i_idx in zip(spk_no, spk, spk_idx):
+                spkwav_temp = data[i_spk + spk_range[0] - batch_start:i_spk + spk_range[1] - batch_start, self.waveform_channel[i_idx]]
                 spkwav[i] = spkwav_temp - spkwav_temp[0, :]
         
         self.waveform_raw = np.array([np.median(spkwav[(idx == i_unit) & spk_used], axis=0) 
                                       for i_unit in range(self.n_unit)])
         self.Vpp_raw = np.ptp(self.waveform_raw, axis=(1, 2))
 
-    def save(self):
+    def save(self, path=None):
+        path = path or self.path
+
         spike = {
             'time': self.time,
+            'frame': self.frame,
             'firing_rate': self.firing_rate,
             'position': self.position,
             'waveform': self.waveform,
-            'waveform_site': self.waveform_site,
-            'max_channel': self.max_channel,
-            'channel_map': self.channel_map,
+            'waveform_idx': self.waveform_idx,
+            'waveform_channel': self.waveform_channel,
+            'waveform_position': self.waveform_position,
             'Vpp': self.Vpp,
             'n_unit': self.n_unit,
+            'channel_map': self.channel_map,
+            'channel_position': self.channel_position,
+            'cluster_group': self.cluster_group,
         }
+
         if self.waveform_raw is not None:
-            spike['waveform_raw'] = self.waveform_raw
-            spike['Vpp_raw'] = self.Vpp_raw
+            spike.update({
+                'waveform_raw': self.waveform_raw,
+                'Vpp_raw': self.Vpp_raw
+            })
 
-        sio.savemat(os.path.join(self.path, f'{self.session}_data.mat'), {'Spike': spike})
+        fn = os.path.join(path, f'{self.session}_data.mat')
+        tprint(f"Saving Kilosort data to {fn}")
+        savemat_safe(fn, 'spike', spike)
 
+    def plot(self, idx=0, xscale=1, yscale=1):
+        """
+        Plot the template waveform and raw waveform for a given unit.
+        """
+        import matplotlib.pyplot as plt
+
+        waveform = self.waveform[idx]
+        waveform_raw = self.waveform_raw[idx]
+        Vpp = self.Vpp[idx]
+        Vpp_raw = self.Vpp_raw[idx]
+        position = self.waveform_position[idx]
+
+        x = np.arange(-20.0, 41.0) / 3 * xscale
+        y = waveform / Vpp * 40 * yscale
+        y_raw = waveform_raw / Vpp_raw * 40 * yscale
+
+        fig, ax = plt.subplots(figsize=(6, 8))
+        
+        for i in range(y.shape[1]):  # Iterate over the second dimension of y
+            xi = x + position[i, 0]
+            yi = y[:, i] + position[i, 1]
+            yi_raw = y_raw[:, i] + position[i, 1]
+            ax.plot(xi, yi, 'k', linewidth=0.5)
+            ax.plot(xi, yi_raw, 'r', linewidth=0.5)
+            ax.text(xi[0], yi[0], f'{self.waveform_channel[idx, i]}', ha='right', va='center', fontsize=8)
+
+        ax.set_xlabel('x (µm)')
+        ax.set_ylabel('y (µm)')
+        ax.set_title(f'Unit {idx}')
+        ax.legend(['template', 'raw'])
+        
+        plt.tight_layout()
+        plt.show()
 
 if __name__ == "__main__":
-    # fn = finder("C:\\SGL_DATA", "params.py$")
-    # fd = os.path.dirname(fn)
-    # spike = Spike(fd)
-    # spike.save()
+    fn = finder("C:\\SGL_DATA", "params.py$", folder=True)
+    ks = Kilosort(fn)
+    # ks.plot(idx=0)
+    ks.save()
 
     # import matplotlib.pyplot as plt
     # fig, axs = plt.subplots(4, 4)
@@ -249,6 +356,6 @@ if __name__ == "__main__":
     #     axs[i].imshow(spike.waveform_raw[i, :, :].T)
 
     # run_ks4("C:\\SGL_DATA")
-    fn = finder("C:\\SGL_DATA")
-    meta = read_meta(fn)
-    info = get_probe(meta)
+    # fn = finder("C:\\SGL_DATA")
+    # meta = read_meta(fn)
+    # info = get_probe(meta)
