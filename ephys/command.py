@@ -42,3 +42,10 @@ def savebmi(path):
 def savetdms(path):
     from .tdms import save_tdms
     save_tdms(path)
+
+@main.command()
+@click.option('--path', type=click.Path(exists=True), default=None)
+def savevr(path):
+    from .vr import VR
+    vr = VR(path=path)
+    vr.save()
