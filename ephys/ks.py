@@ -1,10 +1,11 @@
 import os
+import re
 import numpy as np
 import pandas as pd
 import scipy.io as sio
 
-from .spikeglx import read_meta, read_analog, get_uV_per_bit, get_channel_idx
-from .utils import finder, confirm, savemat_safe, tprint
+from .spikeglx import read_meta, read_analog, read_digital, get_uV_per_bit, get_channel_idx
+from .utils import finder, confirm, savemat_safe, tprint, sync
 
 
 def run_ks4(path=None, settings=None):
@@ -93,9 +94,14 @@ class Kilosort():
 
         self.path = path
         self.session = path.split(os.path.sep)[-2]
+        self.sync = None
+        self.nidq = None
+
         self.load_meta()
         self.load_kilosort()
         self.load_waveforms()
+        self.load_sync()
+        self.load_nidq()
 
     def load_meta(self):
         ops = np.load(os.path.join(self.path, 'ops.npy'), allow_pickle=True).item()
@@ -281,6 +287,51 @@ class Kilosort():
                                       for i_unit in range(self.n_unit)])
         self.Vpp_raw = np.ptp(self.waveform_raw, axis=(1, 2))
 
+    def load_sync(self):
+        if not os.path.exists(self.data_file_path):
+            print(f"Data file {self.data_file_path} does not exist")
+            return
+
+        if self.meta.get('typeThis') != 'imec':
+            print(f"Unsupported data type: {self.meta.get('typeThis')}")
+            return
+
+        tprint(f"Loading sync from {self.data_file_path}")
+        data_sync = read_digital(self.data_file_path).query('chan == 6 and type == 1')
+        sync = {
+            'time_imec': data_sync['time'].values,
+            'frame_imec': data_sync['frame'].values,
+            'type_imec': data_sync['type'].values,
+        }
+
+        if self.sync is None:
+            self.sync = sync
+        else:
+            self.sync.update(sync)
+
+    def load_nidq(self, path=None):
+        nidq_fn = path if path and os.path.isfile(path) else finder(os.path.dirname(os.path.dirname(self.data_file_path)), 'nidq.bin$') or finder(pattern='nidq.bin$')
+        
+        if not nidq_fn:
+            tprint("Could not find a NIDQ file")
+            return
+
+        tprint(f"Loading nidq data from {nidq_fn}")
+        data_nidq = read_digital(nidq_fn)
+        
+        df_nidq = data_nidq[data_nidq['chan'] > 0]
+        df_sync = data_nidq[(data_nidq['chan'] == 0) & (data_nidq['type'] == 1)]
+
+        self.nidq = {key: df_nidq[key].values for key in ['time', 'frame', 'chan', 'type']}
+        data_sync = {f'{key}_nidq': df_sync[key].values for key in ['time', 'frame', 'type']}
+
+        if self.sync is None:
+            self.sync = data_sync
+        else:
+            self.sync.update(data_sync)
+        
+        self.nidq['time_imec'] = sync(self.sync['time_nidq'], self.sync['time_imec'])(self.nidq['time'])
+
     def save(self, path=None):
         path = path or self.path
 
@@ -311,10 +362,16 @@ class Kilosort():
                 'waveform_raw': self.waveform_raw,
                 'Vpp_raw': self.Vpp_raw
             })
+        
+        data = {'spike': spike}
+        if self.sync:
+            data['sync'] = self.sync
+        if self.nidq:
+            data['nidq'] = self.nidq
 
         fn = os.path.join(path, f'{self.session}_data.mat')
         tprint(f"Saving Kilosort data to {fn}")
-        savemat_safe(fn, {'spike': spike})
+        savemat_safe(fn, data)
 
     def plot(self, idx=0, xscale=1, yscale=1):
         """
@@ -353,8 +410,8 @@ class Kilosort():
 if __name__ == "__main__":
     fn = finder("C:\\SGL_DATA", "params.py$", folder=True)
     ks = Kilosort(fn)
-    # ks.plot(idx=0)
     ks.save()
+    # ks.plot(idx=0)
 
     # import matplotlib.pyplot as plt
     # fig, axs = plt.subplots(4, 4)

@@ -45,7 +45,7 @@ def finder(path: Optional[str] = None,
         os.path.join(root, filename)
         for root, _, filenames in os.walk(path)
         for filename in filenames
-        if re.search(pattern, filename) and '.phy' not in root.split(os.path.sep)
+        if re.search(pattern, filename) and '.phy' not in os.path.dirname(os.path.join(root, filename))
     ]
 
     if folder:
@@ -174,7 +174,7 @@ def savemat_safe(fn, data):
 
     try:
         if os.path.exists(fn):
-            data_old = sio.loadmat(fn)
+            data_old = sio.loadmat(fn, simplify_cells=True)
             if not isinstance(data_old, dict):
                 raise ValueError(f"File {fn} is not a dictionary")
 
@@ -187,12 +187,75 @@ def savemat_safe(fn, data):
             if overlap and not confirm(f"Data {key} already exists. Do you want to overwrite it?"):
                 return
             
-            data.update(data_old)
+            # merge data
+            data_old.update(data)
         
-        sio.savemat(fn, data)
+        sio.savemat(fn, data_old)
     except Exception as e:
         print(f"Error {'loading or ' if os.path.exists(fn) else ''}saving file {fn}: {str(e)}")
         sio.savemat(fn, data_old)
+
+
+def sync(time_a, time_b):
+    """
+    Synchronize two time series by finding a linear relationship between them.
+
+    Parameters:
+    -----------
+    time_a : array-like
+        First time series.
+    time_b : array-like
+        Second time series to synchronize with the first.
+
+    Returns:
+    --------
+    callable
+        A function that converts times from the first series to the second.
+
+    Notes:
+    ------
+    This function performs the following steps:
+    1. Checks if the input time series have the same length.
+    2. Performs a linear regression to check if the relationship is linear.
+    3. Removes outliers that deviate more than 2 ms from the linear fit.
+    4. If there are enough remaining points, returns an interpolation function.
+    5. If not enough points remain, returns the original linear regression function.
+
+    If the r-squared value of the linear regression is less than 0.98, the function
+    considers the sync to have failed and returns the identity function.
+    """
+    from scipy.stats import linregress
+    from scipy.interpolate import interp1d
+
+    if len(time_a) != len(time_b):
+        tprint(f"Sync failed: time_a and time_b have different lengths: {len(time_a)} != {len(time_b)}")
+        n_sync = min(len(time_a), len(time_b))
+        time_a = time_a[:n_sync]
+        time_b = time_b[:n_sync]
+    
+    # Check if the syncs are in linear relationship
+    slope, intercept, r_value, _, _ = linregress(time_a, time_b)
+    r_squared = r_value**2
+    if r_squared < 0.98:
+        tprint(f"Sync failed: slope {slope:.6f}, intercept {intercept:.6f}, r-squared {r_squared:.6f}")
+        return lambda x: x
+    tprint(f"Sync OK: slope {slope:.6f}, intercept {intercept:.6f}, r-squared {r_squared:.6f}")
+
+    # Check if the syncs have any outliers
+    sync_diff = time_a * slope + intercept - time_b
+    outlier = sync_diff >= 0.002  # 2 ms
+    if outlier.sum() > 0:
+        time_a = time_a[~outlier]
+        time_b = time_b[~outlier]
+        tprint(f"Removed {outlier.sum()} outliers")
+
+    # Check if there are enough sync points after removing outliers
+    if len(time_a) < 2:
+        tprint("Not enough sync points after removing outliers. Using original linear regression.")
+        return lambda x: x * slope + intercept
+
+    # Return the function to convert nidq time to imec time
+    return interp1d(time_a, time_b, kind='linear', fill_value="extrapolate")
 
 
 if __name__ == "__main__":
