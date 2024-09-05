@@ -244,39 +244,34 @@ def get_raster_psth(time_spike, time_event, type_event=None,
 
 
 def plot_raster_psth(time_spike, time_event, type_event=None, window=[-5, 5], reorder=1, binsize=0.01, sigma=10, fig=None):
-
-    cmap = [(0, 0, 0)] + list(plt.get_cmap('tab10').colors)
-
     if fig is None:
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 4), sharex=True)
     else:
         fig.clear()
         ax1, ax2 = fig.subplots(2, 1, sharex=True)
     
-    window_raw = window + np.array([-binsize*sigma*3, binsize*sigma*3])
-
+    window_raw = np.array(window) + np.array([-binsize*sigma*3, binsize*sigma*3])
     raster, psth = get_raster_psth(time_spike, time_event, type_event, window=window_raw, reorder=reorder, binsize=binsize, sigma=sigma)
 
+    cmap = [(0, 0, 0)] + list(plt.get_cmap('tab10').colors)
     for i, (x, y, conv) in enumerate(zip(raster['x'], raster['y'], psth['conv'])):
-        ax1.plot(x, y, color=cmap[i % len(cmap)], linewidth=0.5)
-        ax2.plot(psth['t'], conv, color=cmap[i % len(cmap)])
+        color = cmap[i % len(cmap)]
+        ax1.plot(x, y, color=color, linewidth=0.5)
+        ax2.plot(psth['t'], conv, color=color)
     
     ylim_raster = [0, max(np.nanmax(y) for y in raster['y'])]
     ylim_psth = [0, np.nanmax(psth['conv']) * 1.1]
-
     for ax, ylim in [(ax1, ylim_raster), (ax2, ylim_psth)]:
         ax.vlines(0, 0, ylim[1], color='gray', linestyle='--', linewidth=0.5)
         ax.set_xlim(window)
         ax.set_ylim(ylim)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+        ax.spines[['top', 'right']].set_visible(False)
 
     ax1.set_ylabel('Trial')
     ax2.set_ylabel('Firing Rate (Hz)')
     ax2.set_xlabel('Time (s)')
 
     fig.tight_layout()
-
     return fig
 
 
