@@ -30,7 +30,89 @@ pip install git+https://github.com/nctrl-lab/nctrl-ephys.git
     - The final file will represent one behavioral session.
 6. Load the data using `ephys.spike.Spike` class.
 ```python
-spike = Spike(path='path/to/data.mat')
+from ephys.spike import Spike
+from ephys.utils import finder
+
+path = finder(msg='Select the .mat file', pattern='.mat$')
+spike = Spike(path)
+spike
+```
+
+```python
+path
+    C:\SGL_DATA\abc0\abc0_20240101_M1_g0_imec0\kilosort4\abc0_20240101_M1_g0_imec0_data.mat
+spike
+    time: (12,)
+    frame: (12,)
+    firing_rate: (12,)
+    position: (12, 2)
+    waveform: (12, 61, 14)
+    waveform_idx: (12, 14)
+    waveform_channel: (12, 14)
+    waveform_position: (12, 14, 2)
+    Vpp: (12,)
+    n_unit: 12
+    channel_map: (374,)
+    channel_position: (374, 2)
+    cluster_group: (370,)
+    meta:
+    n_channel: 384
+    sample_rate: 29999.872727272726
+    waveform_raw: (12, 61, 14)
+    Vpp_raw: (12,)
+sync
+    time_imec: (407,)
+    frame_imec: (407,)
+    type_imec: (407,)
+    time_nidq: (407,)
+    frame_nidq: (407,)
+    type_nidq: (407,)
+nidq
+    time: (408,)
+    frame: (408,)
+    chan: (408,)
+    type: (408,)
+    time_imec: (408,)
+vr
+    timeSecs: (29738,)
+    frame: (29738,)
+    timeSecsAfterSplash: (29738,)
+    frameAfterSplash: (29738,)
+    readTimestampMs: (29738,)
+    speed: (29738,)
+    rotation: (29738,)
+    ballSpeed: (29738,)
+    pitch: (29738,)
+    roll: (29738,)
+    yaw: (29738,)
+    distance: (29738,)
+    events: (29738,)
+    position_x: (29738,)
+    position_y: (29738,)
+    position_z: (29738,)
+trial
+    timeSecs: (307,)
+    frame: (307,)
+    timeSecsAfterSplash: (307,)
+    frameAfterSplash: (307,)
+    iState: (307,)
+    iTrial: (307,)
+    iTrial1: (307,)
+    iTrial2: (307,)
+    iCorrect: (307,)
+    iCorrect1: (307,)
+    iCorrect2: (307,)
+    iChoice: (307,)
+    cChoice: (307,)
+    iReward: (307,)
+    delayDuration: (307,)
+    rewardLatency: (307,)
+    punishmentLatency: (307,)
+    note: (307,)
+......
+```
+
+```python
 spike.plot() # this will generate an interactive raster and PSTH figure to browse the data.
 ```
 
