@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from scipy import signal
 from scipy.io import loadmat
+import matplotlib.pyplot as plt
 
 from .utils import tprint, finder
 
@@ -102,13 +103,10 @@ class Spike:
     def plot(self):
         import tkinter as tk
         from tkinter import ttk
-        import matplotlib.pyplot as plt
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
         trial_type = list(self.time_nidq.keys())
         unit_ids = list(range(self.spike['n_unit']))
-        
-        cmap = [(0, 0, 0)] + list(plt.get_cmap('tab10').colors)
 
         def update_plot():
             selected_type = type_var.get()
@@ -121,36 +119,7 @@ class Spike:
             time_spike = self.spike['time'][selected_unit]
             time_trial = self.time_nidq[selected_type]
 
-            data_raster, data_psth = get_raster_psth(time_spike, time_trial, window=window, reorder=reorder, binsize=binsize, sigma=sigma)
-
-            fig.clear()
-            ax1, ax2 = fig.subplots(2, 1)
-
-            for i, (x, y, conv) in enumerate(zip(data_raster['x'], data_raster['y'], data_psth['conv'])):
-                ax1.plot(x, y, color=cmap[i//10])
-                ax2.plot(data_psth['t'], conv, color=cmap[i//10])
-            
-            xlim = [window[0] + binsize*sigma, window[1] - binsize*sigma]
-            ylim0 = [0, data_raster['y'][-1].max()]
-            ylim1 = [0, np.nanmax(data_psth['conv']) * 1.1]
-            ax1.vlines(0, 0, ylim0[1], color='black', linestyle='--')
-            ax2.vlines(0, 0, ylim1[1], color='black', linestyle='--')
-
-            for ax in (ax1, ax2):
-                ax.set_box_aspect(0.5)
-                ax.set_xlim(xlim)
-                ax.spines['top'].set_visible(False)
-                ax.spines['right'].set_visible(False)
-
-            ax1.set_ylabel('Trial')
-            ax1.set_title(f'Unit {selected_unit} - {selected_type}')
-            ax1.set_ylim(ylim0)
-
-            ax2.set_ylabel('Firing Rate (Hz)')
-            ax2.set_xlabel('Time (s)')
-            ax2.set_ylim(ylim1)
-
-            fig.tight_layout()
+            plot_raster_psth(time_spike, time_trial, window=window, reorder=reorder, binsize=binsize, sigma=sigma, fig=fig)
             canvas.draw()
 
         root = tk.Tk()
@@ -160,8 +129,8 @@ class Spike:
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         params = [
-            ("Trial Type:", "type_var", trial_type[0]),
-            ("Unit ID:", "unit_var", "0"),
+            ("Trial Type:", "type_var", trial_type[0], trial_type),
+            ("Unit ID:", "unit_var", "0", unit_ids),
             ("Window Start:", "window_start", "-5"),
             ("Window End:", "window_end", "5"),
             ("Reorder:", "reorder_var", "1"),
@@ -169,25 +138,15 @@ class Spike:
             ("Sigma:", "sigma_var", "10")
         ]
 
-        for label, var_name, default in params:
+        for label, var_name, default, values in params:
             ttk.Label(frame, text=label).grid(column=0, row=frame.grid_size()[1], sticky=tk.W)
             var = tk.StringVar(value=default)
-            if label == "Trial Type:":
-                widget = ttk.Combobox(frame, textvariable=var, values=trial_type)
-            elif label == "Unit ID:":
-                widget = ttk.Combobox(frame, textvariable=var, values=unit_ids)
+            if values:
+                widget = ttk.Combobox(frame, textvariable=var, values=values)
             else:
                 widget = ttk.Entry(frame, textvariable=var)
             widget.grid(column=1, row=frame.grid_size()[1]-1, sticky=(tk.W, tk.E))
             setattr(frame, var_name, var)
-
-        type_var = frame.type_var
-        unit_var = frame.unit_var
-        window_start = frame.window_start
-        window_end = frame.window_end
-        reorder_var = frame.reorder_var
-        binsize_var = frame.binsize_var
-        sigma_var = frame.sigma_var
 
         ttk.Button(frame, text="Update Plot", command=update_plot).grid(column=1, row=frame.grid_size()[1], sticky=tk.E)
 
@@ -197,7 +156,6 @@ class Spike:
 
         update_plot()
         root.mainloop()
-
 
 def align(time_spike, time_event, window=[-5, 5]):
     time_aligned = [time_spike[(time_spike >= te + window[0]) & (time_spike <= te + window[1])] - te if not np.isnan(te) else np.array([]) for te in time_event]
@@ -230,7 +188,7 @@ def get_raster(time_aligned, type_event, reorder=1, line=True):
         in_trial = type_event == i_type
         n_spike_type = n_spike[in_trial]
         x_temp = np.concatenate(time_aligned[in_trial])
-        y_temp = np.repeat(np.arange(1, n_trial_type[i_type] + 1) if reorder else np.arange(1, len(type_event) + 1)[in_trial], n_spike_type) + cum_trial[i_type]
+        y_temp = np.repeat(np.arange(1, n_trial_type[i_type] + 1, dtype=float) if reorder else np.arange(1, len(type_event) + 1, dtype=float)[in_trial], n_spike_type) + cum_trial[i_type]
 
         if line:
             x[i_type] = np.column_stack((x_temp, x_temp, np.full_like(x_temp, np.nan))).ravel()
@@ -276,12 +234,50 @@ def get_raster_psth(time_spike, time_event, type_event=None,
     time_event = time_event[in_event]
     type_event = type_event[in_event].astype('int64')
     type_unique, type_index = np.unique(type_event, return_inverse=True)
+
     
     time_aligned = align(time_spike, time_event, window)
     x, y = get_raster(time_aligned, type_index, reorder, line)
     t, bar, conv = get_psth(time_aligned, type_index, binsize, sigma, window)
     
     return {'x': x, 'y': y, 'type': type_unique}, {'t': t, 'bar': bar, 'conv': conv, 'type': type_unique}
+
+
+def plot_raster_psth(time_spike, time_event, type_event=None, window=[-5, 5], reorder=1, binsize=0.01, sigma=10, fig=None):
+
+    cmap = [(0, 0, 0)] + list(plt.get_cmap('tab10').colors)
+
+    if fig is None:
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 4), sharex=True)
+    else:
+        fig.clear()
+        ax1, ax2 = fig.subplots(2, 1, sharex=True)
+    
+    window_raw = window + np.array([-binsize*sigma*3, binsize*sigma*3])
+
+    raster, psth = get_raster_psth(time_spike, time_event, type_event, window=window_raw, reorder=reorder, binsize=binsize, sigma=sigma)
+
+    for i, (x, y, conv) in enumerate(zip(raster['x'], raster['y'], psth['conv'])):
+        ax1.plot(x, y, color=cmap[i % len(cmap)], linewidth=0.5)
+        ax2.plot(psth['t'], conv, color=cmap[i % len(cmap)])
+    
+    ylim_raster = [0, max(np.nanmax(y) for y in raster['y'])]
+    ylim_psth = [0, np.nanmax(psth['conv']) * 1.1]
+
+    for ax, ylim in [(ax1, ylim_raster), (ax2, ylim_psth)]:
+        ax.vlines(0, 0, ylim[1], color='gray', linestyle='--', linewidth=0.5)
+        ax.set_xlim(window)
+        ax.set_ylim(ylim)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+    ax1.set_ylabel('Trial')
+    ax2.set_ylabel('Firing Rate (Hz)')
+    ax2.set_xlabel('Time (s)')
+
+    fig.tight_layout()
+
+    return fig
 
 
 def get_latency(spike, event_onset, event_offset, duration=0.08, offset=0.3, min_latency=0.02, prob=0.05):
@@ -314,4 +310,12 @@ def get_latency(spike, event_onset, event_offset, duration=0.08, offset=0.3, min
 if __name__ == '__main__':
     path = finder(path="C:\SGL_DATA", msg='Select a session file', pattern=r'.mat$')
     spike = Spike(path)
-    spike.plot()
+
+    # interactive plot
+    # spike.plot()
+
+    # plot raster and psth
+    time_spike = spike.spike['time'][0]
+    time_event = spike.nidq.query('chan == 2 and type == 1')['time_imec'].values
+    plot_raster_psth(time_spike, time_event)
+    plt.show()
