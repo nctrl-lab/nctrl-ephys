@@ -1,7 +1,3 @@
-# spike.align(time_spike, time_event, window=[-5, 5])
-# spike.count_spike(time_spike, time_event, window=[-0.5, 0.5])
-# spike.plot(time_spike, time_event, type_event, window=[-5, 5], reorder=1, binsize=0.01, resolution=10)
-
 import os
 import numpy as np
 import pandas as pd
@@ -62,30 +58,33 @@ class Spike:
         spkidx = np.argsort(spk)
         return pd.DataFrame({'time': spk[spkidx], 'unit': idx[spkidx]})
 
-    def spike_bin(self, binsize=0.10, kernel_size=None):
+    def spike_bin(self, bin_size=0.10, window_size=None):
         """
         Return an array of binned spikes by time and unit id for decoding analysis.
 
-        * If kernel_size is None, return the binned spikes without convolution.
-        * kernel_size should be odd number.
+        * If window_size is None, return the binned spikes without convolution.
+        * window_size should be odd number.
         """
         spk = self.spike_df
-        xedges = np.arange(spk.time.min(), spk.time.max(), binsize)
+        xedges = np.arange(spk.time.min(), spk.time.max(), bin_size)
         yedges = np.arange(spk.unit.max() + 2)
-        xcenter = xedges[:-1] + binsize/2
+        xcenter = xedges[:-1] + bin_size/2
         
         spks, _, _ = np.histogram2d(spk.time.values, spk.unit.values, bins=(xedges, yedges))
 
-        if kernel_size is None:
+        if window_size is None:
             return xcenter, yedges[:-1], spks
         
-        assert kernel_size % 2 == 1, "kernel_size must be odd"
-        spks_conv = smooth(spks, type='boxcar', sigma=kernel_size, mode='valid')
+        assert window_size % 2 == 1, "window_size must be odd"
+        spks_conv = smooth(spks, type='boxcar', sigma=window_size, mode='valid', axis=0)
 
-        return xcenter[kernel_size//2:-kernel_size//2 + 1], yedges[:-1], spks_conv
+        return xcenter[window_size//2:-window_size//2 + 1], yedges[:-1], spks_conv
     
     @property
     def time_nidq(self):
+        if not hasattr(self, 'nidq'):
+            return None
+        
         chans = np.unique(self.nidq.chan.values)
         types = np.unique(self.nidq.type.values)
 
@@ -99,26 +98,36 @@ class Spike:
         
         return time_nidq
 
-    def plot(self):
+    def plot(self, event=None):
         import tkinter as tk
         from tkinter import ttk
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-        trial_type = list(self.time_nidq.keys())
-        unit_ids = list(range(self.spike['n_unit']))
+        if event is None:
+            event = self.time_nidq
+        
+        if event is None:
+            print("No event found")
+            return
+        
+        if not isinstance(event, dict):
+            event = {'event': event}
+        
+        trial_type = list(event.keys())
+        unit_ids = list(range(self.spike['time'].shape[0]))
 
         def update_plot():
             selected_type = frame.type_var.get()
             selected_unit = int(frame.unit_var.get())
             window = [float(frame.window_start.get()), float(frame.window_end.get())]
             reorder = int(frame.reorder_var.get())
-            binsize = float(frame.binsize_var.get())
+            bin_size = float(frame.bin_size_var.get())
             sigma = int(frame.sigma_var.get())
 
             time_spike = self.spike['time'][selected_unit]
-            time_trial = self.time_nidq[selected_type]
+            time_trial = event[selected_type]
 
-            plot_raster_psth(time_spike, time_trial, window=window, reorder=reorder, binsize=binsize, sigma=sigma, fig=fig)
+            plot_raster_psth(time_spike, time_trial, window=window, reorder=reorder, bin_size=bin_size, sigma=sigma, fig=fig)
             canvas.draw()
 
         root = tk.Tk()
@@ -133,7 +142,7 @@ class Spike:
             ("Window Start:", "window_start", "-5", None),
             ("Window End:", "window_end", "5", None),
             ("Reorder:", "reorder_var", "1", None),
-            ("Bin Size:", "binsize_var", "0.01", None),
+            ("Bin Size:", "bin_size_var", "0.01", None),
             ("Sigma:", "sigma_var", "10", None)
         ]
 
@@ -198,9 +207,9 @@ def get_raster(time_aligned, type_event, reorder=1, line=True):
     
     return x, y
 
-def get_spike_bin(time_aligned, binsize=0.01, window=[-5, 5]):
-    bins = np.arange(window[0] - binsize/2, window[1] + binsize, binsize)
-    t = bins[:-1] + binsize/2
+def get_spike_bin(time_aligned, bin_size=0.01, window=[-5, 5]):
+    bins = np.arange(window[0] - bin_size/2, window[1] + bin_size, bin_size)
+    t = bins[:-1] + bin_size/2
     n_trial = len(time_aligned)
     
     time_binned = np.zeros((n_trial, len(t)))
@@ -225,23 +234,25 @@ def smooth(time_binned, type='gaussian', sigma=10, axis=1, mode='same'):
     return time_binned_conv
 
 
-def get_psth(time_aligned, type_event, binsize=0.01, sigma=10, window=[-5, 5], do_smooth=True):
-    t, time_binned = get_spike_bin(time_aligned, binsize, window)
+def get_psth(time_aligned, type_event, bin_size=0.01, sigma=10, window=[-5, 5], do_smooth=True):
+    t, time_binned = get_spike_bin(time_aligned, bin_size, window)
     time_conv = smooth(time_binned, sigma=sigma) if do_smooth else time_binned
 
     types, type_counts = np.unique(type_event, return_counts=True)
     n_type = len(types)
     
     psth = np.zeros((n_type, len(t)))
+    psth_sem = np.zeros((n_type, len(t)))
     for i, (i_type, count) in enumerate(zip(types, type_counts)):
         in_trial = type_event == i_type
-        psth[i] = time_conv[in_trial].sum(axis=0) / (binsize * count)
+        psth[i] = np.nansum(time_conv[in_trial], axis=0) / (bin_size * count)
+        psth_sem[i] = np.nanstd(time_conv[in_trial], axis=0) / (bin_size * np.sqrt(count))
     
-    return t, psth
+    return t, psth, psth_sem
 
 
 def get_raster_psth(time_spike, time_event, type_event=None, 
-         window=[-5, 5], reorder=1, binsize=0.01, sigma=10, line=True):
+         window=[-5, 5], reorder=1, bin_size=0.01, sigma=10, line=True):
 
     if type_event is None:
         type_event = np.zeros(len(time_event))
@@ -254,27 +265,28 @@ def get_raster_psth(time_spike, time_event, type_event=None,
     
     time_aligned = align(time_spike, time_event, window)
     x, y = get_raster(time_aligned, type_index, reorder, line)
-    t, psth = get_psth(time_aligned, type_index, binsize, sigma, window)
+    t, psth, psth_sem = get_psth(time_aligned, type_index, bin_size, sigma, window)
     
-    return {'x': x, 'y': y, 'type': type_unique}, {'t': t, 'y': psth, 'type': type_unique}
+    return {'x': x, 'y': y}, {'t': t, 'y': psth, 'sem': psth_sem}
 
 
-def plot_raster_psth(time_spike, time_event, type_event=None, window=[-5, 5], reorder=1, binsize=0.01, sigma=10, fig=None):
+def plot_raster_psth(time_spike, time_event, type_event=None, window=[-5, 5], reorder=1, bin_size=0.01, sigma=10, fig=None):
     if fig is None:
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 4), sharex=True)
     else:
         fig.clear()
         ax1, ax2 = fig.subplots(2, 1, sharex=True)
     
-    window_raw = np.array(window) + np.array([-binsize*sigma*3, binsize*sigma*3])
-    raster, psth = get_raster_psth(time_spike, time_event, type_event, window=window_raw, reorder=reorder, binsize=binsize, sigma=sigma)
+    window_raw = np.array(window) + np.array([-bin_size*sigma*3, bin_size*sigma*3])
+    raster, psth = get_raster_psth(time_spike, time_event, type_event, window=window_raw, reorder=reorder, bin_size=bin_size, sigma=sigma)
 
     cmap = [(0, 0, 0)] + list(plt.get_cmap('tab10').colors)
-    for i, (x, y, y_psth) in enumerate(zip(raster['x'], raster['y'], psth['y'])):
+    for i, (x, y, y_psth, y_sem) in enumerate(zip(raster['x'], raster['y'], psth['y'], psth['sem'])):
         color = cmap[i % len(cmap)]
         ax1.plot(x, y, color=color, linewidth=0.5)
         ax2.plot(psth['t'], y_psth, color=color)
-    
+        ax2.fill_between(psth['t'], y_psth - y_sem, y_psth + y_sem, color=color, alpha=0.2, linewidth=0)
+
     ylim_raster = [0, max(np.nanmax(y) for y in raster['y'])]
     ylim_psth = [0, np.nanmax(psth['y']) * 1.1]
     for ax, ylim in [(ax1, ylim_raster), (ax2, ylim_psth)]:
