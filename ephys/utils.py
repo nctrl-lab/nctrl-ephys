@@ -16,6 +16,7 @@ def tprint(text):
 
 def finder(path: Optional[str] = None,
            pattern: str = r'\.meta$',
+           msg: str = None,
            multiple: bool = False,
            folder: bool = False,
            ask: bool = True,
@@ -26,6 +27,7 @@ def finder(path: Optional[str] = None,
     Args:
         path (Optional[str]): The directory path to explore. Defaults to None.
         pattern (str, optional): Regex pattern to match filenames. Defaults to '.meta'.
+        msg (str, optional): Message to display in the dialog. Defaults to None.
         multiple (bool, optional): Whether to allow multiple files to be selected. Defaults to False.
         folder (bool, optional): Whether to select folders or files. Defaults to False.
         ask (bool, optional): Whether to use a dialog or not. Defaults to True.
@@ -89,11 +91,15 @@ def finder(path: Optional[str] = None,
         # If running in a command line environment, use inquirer for file selection
         else:
             if multiple:
-                cmd = f"Select {'folders' if folder else 'files'} (Space: select/unselect, Ctrl-A: select all, Ctrl-R: unselect all, Enter: confirm)"
-                return inquirer.checkbox(cmd, choices=files, default=files)
+                if msg is None:
+                    msg = f"Select {'folders' if folder else 'files'}"
+                msg += f" (Space: select/unselect, Ctrl-A: select all, Ctrl-R: unselect all, Enter: confirm)"
+                return inquirer.checkbox(msg, choices=files, default=files)
             else:
-                cmd = f"Select a {'folder' if folder else 'file'} (Enter: confirm)"
-                return inquirer.list_input(cmd, choices=files)
+                if msg is None:
+                    msg = f"Select a {'folder' if folder else 'file'}"
+                msg += f" (Enter: confirm)"
+                return inquirer.list_input(msg, choices=files)
 
     except Exception as e:
         print(f"An error occurred: {e}")
@@ -190,10 +196,10 @@ def savemat_safe(fn, data):
             # merge data
             data_old.update(data)
         
-        sio.savemat(fn, data_old)
+        sio.savemat(fn, data_old, oned_as='column')
     except Exception as e:
         print(f"Error {'loading or ' if os.path.exists(fn) else ''}saving file {fn}: {str(e)}")
-        sio.savemat(fn, data_old)
+        sio.savemat(fn, data_old, oned_as='column')
 
 
 def sync(time_a, time_b):
