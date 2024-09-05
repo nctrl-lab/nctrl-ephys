@@ -16,13 +16,32 @@ pip install git+https://github.com/nctrl-lab/nctrl-ephys.git
 - [Kilosort4](https://github.com/Mouseland/Kilosort)
 - [phy](https://github.com/cortex-lab/phy)
 
-## Pipelines
+## Pipelines for SpikeGLX data
 1. Run SpikeGLX to record Neuropixels data
 2. Run CatGT (`ephys catgt`) to concatenate and denoise the data
 3. Run Kilosort (`ephys runks`)
 4. Run phy to curate the Kilosort results and save the result (`ephys saveks`)
-5. Extract the sync and event times data from SpikeGLX files (`ephys.spikeglx.read_digital`)
-6. Analyze the data (`ephys.spike`)
+    - This will also extract the sync and event times data from SpikeGLX files.
+    - The final output will be a `.mat` file including the spike, sync, and event times (from nidq file) data.
+    - NIDQ time will be synced with the spike data.
+5. Extract behavioral data from VR log file (`ephys savevr`)
+    - This will extract 'vr', 'trial', 'task_info', 'task_parameter', and 'monitor_info'.
+    - It will be merged with the previous `.mat` file.
+    - The final file will represent one behavioral session.
+6. Load the data using `ephys.spike.Spike` class.
+```python
+spike = Spike(path='path/to/data.mat')
+spike.plot() # this will generate an interactive raster and PSTH figure to browse the data.
+```
+
+## Pipeline for BMI data
+1. Record BMI data
+2. Run `ephys savebmi` to merge the BMI data into a binary file to run Kilosort.
+3. Run Kilosort (`ephys runks`)
+4. Run phy to curate the Kilosort results and save the result (`ephys saveks`)
+5. Extract event data from data logger (`ephys savetdms`)
+6. Load the data using `ephys.spike.Spike` class.
+
 
 ## Usage
 ### Command Line Interface

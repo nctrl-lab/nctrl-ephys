@@ -170,8 +170,14 @@ class Kilosort():
         spike_templates = np.load(os.path.join(self.path, 'spike_templates.npy'))
         
         # manual clustering information
-        cluster_info = pd.read_csv(os.path.join(self.path, 'cluster_info.tsv'), sep='\t')
-        self.cluster_group = cluster_info['group'].values
+        cluster_fn = os.path.join(self.path, 'cluster_info.tsv')
+        if os.path.exists(cluster_fn):
+            cluster_info = pd.read_csv(cluster_fn, sep='\t')
+            self.cluster_group = cluster_info['group'].values
+        else:
+            tprint("No cluster_info.tsv found. Loading all clusters.")
+            load_all = True
+        
         if not load_all:
             good_id = cluster_info[cluster_info['group'] == 'good'].cluster_id.values
         else:
