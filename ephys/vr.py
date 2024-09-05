@@ -36,13 +36,19 @@ class VR():
         self.log_info = data[-1]
 
         vr_data = [x for x in data if "position" in x]
-        self.vr = {col: [] for col in vr_data[0].keys()}
+        self.vr = {key: [] for key in vr_data[0].keys() if key != 'position'}
+        self.vr['position_x'] = []
+        self.vr['position_y'] = []
+        self.vr['position_z'] = []
+        
         for item in vr_data:
             for key, value in item.items():
                 if key == 'position':
-                    self.vr[key].append([value['x'], value['y'], value['z']])
+                    self.vr['position_x'].append(value['x'])
+                    self.vr['position_y'].append(value['y'])
+                    self.vr['position_z'].append(value['z'])
                 elif key == 'events':
-                    self.vr[key].append(value if value else '') 
+                    self.vr[key].append(value if value else '')
                 else:
                     self.vr[key].append(value)
         
