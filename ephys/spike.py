@@ -80,8 +80,7 @@ class Spike:
             return xcenter, yedges[:-1], spks
         
         assert kernel_size % 2 == 1, "kernel_size must be odd"
-        kernel = np.ones(kernel_size)
-        spks_conv = np.apply_along_axis(lambda m: np.convolve(m, kernel, mode='valid'), axis=0, arr=spks)
+        spks_conv = smooth(spks, type='boxcar', sigma=kernel_size, mode='valid')
 
         return xcenter[kernel_size//2:-kernel_size//2 + 1], yedges[:-1], spks_conv
     
@@ -109,12 +108,12 @@ class Spike:
         unit_ids = list(range(self.spike['n_unit']))
 
         def update_plot():
-            selected_type = type_var.get()
-            selected_unit = int(unit_var.get())
-            window = [float(window_start.get()), float(window_end.get())]
-            reorder = int(reorder_var.get())
-            binsize = float(binsize_var.get())
-            sigma = int(sigma_var.get())
+            selected_type = frame.type_var.get()
+            selected_unit = int(frame.unit_var.get())
+            window = [float(frame.window_start.get()), float(frame.window_end.get())]
+            reorder = int(frame.reorder_var.get())
+            binsize = float(frame.binsize_var.get())
+            sigma = int(frame.sigma_var.get())
 
             time_spike = self.spike['time'][selected_unit]
             time_trial = self.time_nidq[selected_type]
@@ -131,17 +130,17 @@ class Spike:
         params = [
             ("Trial Type:", "type_var", trial_type[0], trial_type),
             ("Unit ID:", "unit_var", "0", unit_ids),
-            ("Window Start:", "window_start", "-5"),
-            ("Window End:", "window_end", "5"),
-            ("Reorder:", "reorder_var", "1"),
-            ("Bin Size:", "binsize_var", "0.01"),
-            ("Sigma:", "sigma_var", "10")
+            ("Window Start:", "window_start", "-5", None),
+            ("Window End:", "window_end", "5", None),
+            ("Reorder:", "reorder_var", "1", None),
+            ("Bin Size:", "binsize_var", "0.01", None),
+            ("Sigma:", "sigma_var", "10", None)
         ]
 
         for label, var_name, default, values in params:
             ttk.Label(frame, text=label).grid(column=0, row=frame.grid_size()[1], sticky=tk.W)
             var = tk.StringVar(value=default)
-            if values:
+            if values is not None:
                 widget = ttk.Combobox(frame, textvariable=var, values=values)
             else:
                 widget = ttk.Entry(frame, textvariable=var)
@@ -199,34 +198,51 @@ def get_raster(time_aligned, type_event, reorder=1, line=True):
     
     return x, y
 
-
-def get_psth(time_aligned, type_event, binsize=0.01, sigma=10, window=[-5, 5]):
-    bins = np.arange(window[0], window[1], binsize)
+def get_spike_bin(time_aligned, binsize=0.01, window=[-5, 5]):
+    bins = np.arange(window[0] - binsize/2, window[1] + binsize, binsize)
     t = bins[:-1] + binsize/2
-    types = np.unique(type_event)
+    n_trial = len(time_aligned)
+    
+    time_binned = np.zeros((n_trial, len(t)))
+    for i_trial, time_trial in enumerate(time_aligned):
+        time_binned[i_trial], _ = np.histogram(time_trial, bins)
+    
+    return t, time_binned
+
+def smooth(time_binned, type='gaussian', sigma=10, axis=1, mode='same'):
+    if type == 'gaussian':
+        if hasattr(signal, "gaussian"):
+            window = signal.gaussian(5*sigma, sigma)
+        else:
+            window = signal.windows.gaussian(5*sigma, sigma)
+        window /= np.sum(window)
+    elif type == 'boxcar':
+        window = np.ones(sigma)
+    else:
+        raise ValueError(f"Invalid smoothing type: {type}")
+    
+    time_binned_conv = np.apply_along_axis(lambda m: np.convolve(m, window, mode=mode), axis=axis, arr=time_binned)
+    return time_binned_conv
+
+
+def get_psth(time_aligned, type_event, binsize=0.01, sigma=10, window=[-5, 5], do_smooth=True):
+    t, time_binned = get_spike_bin(time_aligned, binsize, window)
+    time_conv = smooth(time_binned, sigma=sigma) if do_smooth else time_binned
+
+    types, type_counts = np.unique(type_event, return_counts=True)
     n_type = len(types)
     
-    # make gaussian window
-    # acutal sigma will be binsize * sigma
-    # if binsize is 0.01 and sigma=10, sigma_actual will be 0.1 s
-    gauss_window = signal.gaussian(5*sigma, sigma)
-    gauss_window /= np.sum(gauss_window)
-    
-    bar = np.zeros((n_type, len(t)))
-    conv = np.zeros_like(bar)
-    for i, i_type in enumerate(types):
+    psth = np.zeros((n_type, len(t)))
+    for i, (i_type, count) in enumerate(zip(types, type_counts)):
         in_trial = type_event == i_type
-        time_spike_type = np.concatenate(time_aligned[in_trial])
-        y, _ = np.histogram(time_spike_type, bins)
-        bar[i, :] = y / binsize / np.sum(in_trial)
-        conv[i, :] = np.convolve(bar[i, :], gauss_window, 'same')
+        psth[i] = time_conv[in_trial].sum(axis=0) / (binsize * count)
     
-    return t, bar, conv
+    return t, psth
 
 
 def get_raster_psth(time_spike, time_event, type_event=None, 
          window=[-5, 5], reorder=1, binsize=0.01, sigma=10, line=True):
-        
+
     if type_event is None:
         type_event = np.zeros(len(time_event))
 
@@ -238,9 +254,9 @@ def get_raster_psth(time_spike, time_event, type_event=None,
     
     time_aligned = align(time_spike, time_event, window)
     x, y = get_raster(time_aligned, type_index, reorder, line)
-    t, bar, conv = get_psth(time_aligned, type_index, binsize, sigma, window)
+    t, psth = get_psth(time_aligned, type_index, binsize, sigma, window)
     
-    return {'x': x, 'y': y, 'type': type_unique}, {'t': t, 'bar': bar, 'conv': conv, 'type': type_unique}
+    return {'x': x, 'y': y, 'type': type_unique}, {'t': t, 'y': psth, 'type': type_unique}
 
 
 def plot_raster_psth(time_spike, time_event, type_event=None, window=[-5, 5], reorder=1, binsize=0.01, sigma=10, fig=None):
@@ -254,13 +270,13 @@ def plot_raster_psth(time_spike, time_event, type_event=None, window=[-5, 5], re
     raster, psth = get_raster_psth(time_spike, time_event, type_event, window=window_raw, reorder=reorder, binsize=binsize, sigma=sigma)
 
     cmap = [(0, 0, 0)] + list(plt.get_cmap('tab10').colors)
-    for i, (x, y, conv) in enumerate(zip(raster['x'], raster['y'], psth['conv'])):
+    for i, (x, y, y_psth) in enumerate(zip(raster['x'], raster['y'], psth['y'])):
         color = cmap[i % len(cmap)]
         ax1.plot(x, y, color=color, linewidth=0.5)
-        ax2.plot(psth['t'], conv, color=color)
+        ax2.plot(psth['t'], y_psth, color=color)
     
     ylim_raster = [0, max(np.nanmax(y) for y in raster['y'])]
-    ylim_psth = [0, np.nanmax(psth['conv']) * 1.1]
+    ylim_psth = [0, np.nanmax(psth['y']) * 1.1]
     for ax, ylim in [(ax1, ylim_raster), (ax2, ylim_psth)]:
         ax.vlines(0, 0, ylim[1], color='gray', linestyle='--', linewidth=0.5)
         ax.set_xlim(window)
@@ -303,14 +319,15 @@ def get_latency(spike, event_onset, event_offset, duration=0.08, offset=0.3, min
 
 
 if __name__ == '__main__':
-    path = finder(path="C:\SGL_DATA", msg='Select a session file', pattern=r'.mat$')
+    path = finder(path="C:\\SGL_DATA", msg='Select a session file', pattern=r'.mat$')
     spike = Spike(path)
 
     # interactive plot
-    # spike.plot()
+    spike.plot()
 
     # plot raster and psth
     time_spike = spike.spike['time'][0]
     time_event = spike.nidq.query('chan == 2 and type == 1')['time_imec'].values
     plot_raster_psth(time_spike, time_event)
     plt.show()
+    breakpoint()

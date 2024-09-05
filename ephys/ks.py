@@ -176,6 +176,7 @@ class Kilosort():
             self.cluster_group = cluster_info['group'].values
         else:
             tprint("No cluster_info.tsv found. Loading all clusters.")
+            self.cluster_group = None
             load_all = True
         
         if not load_all:
