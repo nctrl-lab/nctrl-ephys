@@ -194,5 +194,18 @@ bmi.load_mua()
 bmi.plot_mua()
 ```
 
+#### Ploting raster and PSTH
+```python
+# load mat file
+path = finder(path="C:\SGL_DATA", msg='Select a session file', pattern=r'.mat$')
+spike = Spike(path)
+
+# plot raster and psth
+time_spike = spike.spike['time'][0]
+time_event = spike.nidq.query('chan == 2 and type == 1')['time_imec'].values
+plot_raster_psth(time_spike, time_event)
+plt.show()
+```
+
 ## License
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
