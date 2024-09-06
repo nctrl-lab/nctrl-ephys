@@ -195,11 +195,14 @@ def savemat_safe(fn, data):
             
             # merge data
             data_old.update(data)
+        else:
+            data_old = data
         
         sio.savemat(fn, data_old, oned_as='column')
     except Exception as e:
         print(f"Error {'loading or ' if os.path.exists(fn) else ''}saving file {fn}: {str(e)}")
-        sio.savemat(fn, data_old, oned_as='column')
+        if locals().get('data_old', None) is not None:
+            sio.savemat(fn, data_old, oned_as='column')
 
 
 def sync(time_a, time_b):

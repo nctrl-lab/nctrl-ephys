@@ -164,8 +164,8 @@ class Task():
         if path is None:
             path = finder(folder=False, multiple=False, pattern=r'.mat$')
             if path is None:
-                print("No path provided. Please provide a path to save the data.")
-                return
+                print("No path provided. Saving .mat file in the current directory.")
+                path = self.task_path.replace('.txt', '.mat')
 
         data = {key: value for key, value in self.__dict__.items() if not key.startswith('__')}
         savemat_safe(path, data)
