@@ -74,24 +74,42 @@ class Task():
             else:
                 self.vr[key] = np.array(value, dtype=np.float64)
 
-        # Optimize trial data processing
         trial_data = [x for x in data if "iState" in x]
         self.trial = {col: [] for col in trial_data[0].keys()}
         for item in trial_data:
             for key, value in item.items():
                 self.trial[key].append(value)
         
-        # Convert trial data to numpy arrays efficiently
         for key, value in self.trial.items():
             self.trial[key] = np.array(value)
 
+        # find the last iState 4 or 5
+        in_result = (self.trial['iState'] == 4) | (self.trial['iState'] == 5)
+        i_end = np.where(in_result)[0][-1]
+        for key, value in self.trial.items():
+            self.trial[key] = value[:i_end+1]
+        
+        self.trial['timeStartVr'] = self.trial['timeSecs'][self.trial['iState'] == 2]
+        self.trial['timeChoiceVr'] = self.trial['timeSecs'][self.trial['iState'] == 3]
+        self.trial['timeSuccessVr'] = self.trial['timeSecs'][self.trial['iState'] == 4]
+        self.trial['timeFailVr'] = self.trial['timeSecs'][self.trial['iState'] == 5]
+
+        in_result = (self.trial['iState'] == 4) | (self.trial['iState'] == 5)
+        self.trial['timeResultVr'] = self.trial['timeSecs'][in_result]
+        self.trial['cue'] = self.trial['cChoice'][in_result]
+        self.trial['choice'] = self.trial['iChoice'][in_result]
+        self.trial['result'] = 5 - self.trial['iState'][in_result]
+        self.trial['reward'] = self.trial['iReward'][in_result]
+        self.trial['n_trial'] = len(self.trial['result'])
+
     def parse_pi(self, path):
+        from collections import defaultdict
+
         self.task_time = os.path.getmtime(path)
 
         with open(path) as f:
             data = f.readlines()
 
-        # Use list comprehension for faster processing
         parsed_data = [(int(c), int(t), list(map(int, vs)))
                        for line in data
                        if not line.startswith("0,")
@@ -100,8 +118,6 @@ class Task():
         cmds, times, values = zip(*parsed_data)
         times = rollover_recovery(times) / 1e6 # seconds
 
-        # Use defaultdict for more efficient data collection
-        from collections import defaultdict
         data_types = defaultdict(list)
 
         for cmd, t, vs in zip(cmds, times, values):
@@ -142,10 +158,10 @@ class Task():
             }
             # Successful trial: 1 -> 3
             # Failed trial: 1 -> 2 -> 4
-            self.trial['timeStart'] = self.trial['time'][self.trial['state'] == 1]
-            self.trial['timeEnd'] = self.trial['time'][self.trial['state'] == 2]
-            self.trial['timeITISuccess'] = self.trial['time'][self.trial['state'] == 3]
-            self.trial['timeITIFail'] = self.trial['time'][self.trial['state'] == 4]
+            self.trial['timeStartVr'] = self.trial['time'][self.trial['state'] == 1]
+            self.trial['timeEndVr'] = self.trial['time'][self.trial['state'] == 2]
+            self.trial['timeITISuccessVr'] = self.trial['time'][self.trial['state'] == 3]
+            self.trial['timeITIFailVr'] = self.trial['time'][self.trial['state'] == 4]
             self.trial['result'] = 4 - self.trial['state'][(self.trial['state'] == 3) | (self.trial['state'] == 4)]
             self.trial['n_trial'] = len(self.trial['result'])
 
@@ -183,6 +199,14 @@ class Task():
             print(f"    n_trial: {self.trial['n_trial']}")
             print(f"    performance: {np.mean(self.trial['result'] == 1) * 100:.2f}%")
             print(f"    reward: {len(self.reward['time']) * 0.02:.2f} mL (n={len(self.reward['time'])})")
+
+        elif self.task_type == 'unity':
+            print(f"Task duration: {self.vr['timeSecs'][-1] - self.vr['timeSecs'][0]:.2f} s")
+            print(f"VR data: {len(self.vr['timeSecs'])}")
+            print(f"Trial data:")
+            print(f"    n_trial: {self.trial['n_trial']}")
+            print(f"    performance: {np.mean(self.trial['result'] == 1) * 100:.2f}%")
+            print(f"    reward: {self.trial['reward'][-1] * 0.001:.2f} mL")
 
     def plot(self):
         import matplotlib.pyplot as plt
