@@ -31,7 +31,7 @@ def saveks(path):
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
-def savebmi(path):
+def bmi(path):
     from .bmi import BMI
     bmi = BMI(path)
     bmi.save_mua()
@@ -39,13 +39,16 @@ def savebmi(path):
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
-def savetdms(path):
+def tdms(path):
     from .tdms import save_tdms
     save_tdms(path)
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
-def savevr(path):
-    from .vr import VR
-    vr = VR(path=path)
-    vr.save()
+@click.option('--type', type=click.Choice(['unity', 'pi']), default='unity')
+def task(path, type):
+    from .task import Task
+    task = Task(path=path, task_type=type)
+    task.save()
+    task.summary()
+    task.plot()

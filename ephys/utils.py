@@ -264,6 +264,17 @@ def sync(time_a, time_b):
     return interp1d(time_a, time_b, kind='linear', fill_value="extrapolate")
 
 
+def rollover_recovery(data, max_value=2**32):
+    import numpy as np
+
+    if not isinstance(data, np.ndarray):
+        data = np.array(data)
+
+    diffs = np.diff(data, prepend=data[0])
+    rollovers = np.where(np.abs(diffs) > max_value // 2, -np.sign(diffs), 0)
+    return data + np.cumsum(rollovers) * max_value
+
+
 if __name__ == "__main__":
     # print(finder(folder=True, multiple=True, pattern=r'.bin$'))
     confirm("Are you sure you want to delete all files in this folder?")

@@ -14,7 +14,7 @@ class Spike:
 
         tprint(f"Loading {self.path}")
         temp = loadmat(path, simplify_cells=True)
-        key_pandas = {'vr', 'sync', 'trial', 'nidq'}
+        key_pandas = {'vr', 'sync', 'nidq', 'trial_sync'}
         data = {
             key.lower(): pd.DataFrame(value) if key in key_pandas else value
             for key, value in temp.items()
