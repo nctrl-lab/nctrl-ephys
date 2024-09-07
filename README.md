@@ -24,7 +24,7 @@ pip install git+https://github.com/nctrl-lab/nctrl-ephys.git
     - This will also extract the sync and event times data from SpikeGLX files.
     - The final output will be a `.mat` file including the spike, sync, and event times (from nidq file) data.
     - NIDQ time will be synced with the spike data.
-5. Extract behavioral data from VR log file (`ephys savevr`)
+5. Extract behavioral data from VR log file (`ephys task`)
     - This will extract 'vr', 'trial', 'task_info', 'task_parameter', and 'monitor_info'.
     - It will be merged with the previous `.mat` file.
     - The final file will represent one behavioral session.
@@ -118,10 +118,10 @@ spike.plot() # this will generate an interactive raster and PSTH figure to brows
 
 ## Pipeline for BMI data
 1. Record BMI data
-2. Run `ephys savebmi` to merge the BMI data into a binary file to run Kilosort.
+2. Run `ephys bmi` to merge the BMI data into a binary file to run Kilosort.
 3. Run Kilosort (`ephys runks`)
 4. Run phy to curate the Kilosort results and save the result (`ephys saveks`)
-5. Extract event data from data logger (`ephys savetdms`)
+5. Extract event data from data logger (`ephys tdms`)
 6. Load the data using `ephys.spike.Spike` class.
 
 
