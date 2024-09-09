@@ -141,8 +141,8 @@ class Task():
                 "position_raw": rollover_recovery(vr_data[:, 1])
             }
             self.vr['position'] = self.vr['position_raw'] / N_PULSE_PER_CM
-            self.vr['speed'] = np.ediff1d(self.vr['position']) / np.ediff1d(self.vr['time']) # cm/s
-            self.vr['speed_conv'] = smooth(self.vr['speed'], axis=0)
+            self.vr['speed'] = np.concatenate(([0], np.ediff1d(self.vr['position']) / np.ediff1d(self.vr['time']))) # cm/s
+            self.vr['speed_conv'] = smooth(self.vr['speed'], axis=0, sigma=5)
 
         if len(sync_data) > 0:
             self.trial_sync = {

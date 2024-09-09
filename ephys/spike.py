@@ -14,12 +14,13 @@ class Spike:
 
         tprint(f"Loading {self.path}")
         temp = loadmat(path, simplify_cells=True)
-        key_pandas = {'vr', 'sync', 'nidq', 'trial_sync'}
-        data = {
-            key.lower(): pd.DataFrame(value) if key in key_pandas else value
-            for key, value in temp.items()
-            if not key.startswith('__')
-        }
+        data = {}
+        for key, value in temp.items():
+            if not key.startswith('__'):
+                try:
+                    data[key.lower()] = pd.DataFrame(value)
+                except:
+                    data[key.lower()] = value
         self.__dict__.update(data)
     
     def __repr__(self):
