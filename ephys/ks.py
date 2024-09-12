@@ -7,6 +7,8 @@ import scipy.io as sio
 from .spikeglx import read_meta, read_analog, read_digital, get_uV_per_bit, get_channel_idx
 from .utils import finder, confirm, savemat_safe, tprint, sync
 
+from .metrics import calculate_metrics, DEFAULT_PARAMS
+
 
 def run_ks4(path=None, settings=None):
     try:
@@ -99,9 +101,29 @@ class Kilosort():
 
         self.load_meta()
         self.load_kilosort()
-        self.load_waveforms()
-        self.load_sync()
-        self.load_nidq()
+
+    def __repr__(self):
+        result = []
+        for key, value in self.__dict__.items():
+            if key.startswith('__'):
+                continue
+            result.append(key)
+            if isinstance(value, pd.DataFrame):
+                for col in value.columns:
+                    result.append(f"    {col}: {value[col].shape}")
+            elif isinstance(value, dict):
+                for k, v in value.items():
+                    if isinstance(v, np.ndarray):
+                        result.append(f"    {k}: {v.shape}")
+                    elif isinstance(v, list):
+                        result.append(f"    {k}: {len(v)}")
+                    elif isinstance(v, dict):
+                        result.append(f"    {k}:")
+                    elif isinstance(v, (int, float)):
+                        result.append(f"    {k}: {v}")
+            elif isinstance(value, str):
+                result.append(f"    {value}")
+        return "\n".join(result)
 
     def load_meta(self):
         ops = np.load(os.path.join(self.path, 'ops.npy'), allow_pickle=True).item()
@@ -119,6 +141,21 @@ class Kilosort():
         self.uV_per_bit = get_uV_per_bit(self.meta)
         self.sample_rate = self.meta.get('imSampRate') or self.meta.get('niSampRate') or 1
         self.file_create_time = self.meta.get('fileCreateTime')
+    
+    def _load_kilosort(self):
+        tprint(f"Loading Kilosort data from {self.path}")
+
+        self.spike_times = np.load(os.path.join(self.path, "spike_times.npy"))
+        self.spike_clusters = np.load(os.path.join(self.path, 'spike_clusters.npy'))
+        self.spike_templates = np.load(os.path.join(self.path, 'spike_templates.npy'))
+        self.spike_positions = np.load(os.path.join(self.path, 'spike_positions.npy'))
+        self.pc_features = np.load(os.path.join(self.path, 'pc_features.npy'))
+        self.pc_feature_ind = np.load(os.path.join(self.path, 'pc_feature_ind.npy'))
+        self.templates = np.load(os.path.join(self.path, 'templates.npy'))
+        self.amplitudes = np.load(os.path.join(self.path, 'amplitudes.npy'))
+        self.winv = np.load(os.path.join(self.path, 'whitening_mat_inv.npy'))
+        self.channel_map = np.load(os.path.join(self.path, 'channel_map.npy'))
+        self.channel_position = np.load(os.path.join(self.path, 'channel_positions.npy'))
 
     def load_kilosort(self, load_all=False):
         """
@@ -162,12 +199,7 @@ class Kilosort():
         channel_position : ndarray
             Positions of all channels on the probe.
         """
-        tprint(f"Loading Kilosort data from {self.path}")
-
-        # load spike_times, and unit_id
-        frame = np.load(os.path.join(self.path, "spike_times.npy"))
-        cluster = np.load(os.path.join(self.path, 'spike_clusters.npy'))
-        spike_templates = np.load(os.path.join(self.path, 'spike_templates.npy'))
+        self._load_kilosort()
         
         # manual clustering information
         cluster_fn = os.path.join(self.path, 'cluster_info.tsv')
@@ -182,37 +214,29 @@ class Kilosort():
         if not load_all:
             good_id = cluster_info[cluster_info['group'] == 'good'].cluster_id.values
         else:
-            good_id = np.unique(cluster)
+            good_id = np.unique(self.spike_clusters)
         
-        main_template_id = [np.bincount(spike_templates[cluster == c]).argmax() 
+        main_template_id = [np.bincount(self.spike_templates[self.spike_clusters == c]).argmax() 
                             for c in good_id]
 
         self.n_unit = len(good_id)
         
         # Convert spike times to seconds and group by good clusters
-        self.time = np.array([frame[cluster == c] / self.sample_rate for c in good_id], dtype=object)
-        self.frame = np.array([frame[cluster == c] for c in good_id], dtype=object)
+        self.time = np.array([self.spike_times[self.spike_clusters == c] / self.sample_rate for c in good_id], dtype=object)
+        self.frame = np.array([self.spike_times[self.spike_clusters == c] for c in good_id], dtype=object)
         
         # Calculate firing rates for good clusters
-        self.firing_rate = [len(i) / (frame.max() / self.sample_rate) for i in self.time]
+        self.firing_rate = [len(i) / (self.spike_times.max() / self.sample_rate) for i in self.time]
 
         # Load and calculate mean spike positions for good clusters
-        spike_positions = np.load(os.path.join(self.path, 'spike_positions.npy'))
-        self.position = np.array([np.median(spike_positions[cluster == c], axis=0) 
+        self.position = np.array([np.median(self.spike_positions[self.spike_clusters == c], axis=0) 
                                   for c in good_id])
     
         # Load templates and amplitudes
-        templates = np.load(os.path.join(self.path, 'templates.npy'))
-        amplitudes = np.load(os.path.join(self.path, 'amplitudes.npy'))
-        winv = np.load(os.path.join(self.path, 'whitening_mat_inv.npy'))
-        temp_unwhitened = templates @ winv
+        temp_unwhitened = self.templates @ self.winv
         
         # Find the channel with maximum amplitude for each template
         max_channel = (temp_unwhitened.max(axis=1) - temp_unwhitened.min(axis=1)).argmax(axis=-1)
-
-        # Load channel map
-        self.channel_map = np.load(os.path.join(self.path, 'channel_map.npy'))
-        self.channel_position = np.load(os.path.join(self.path, 'channel_positions.npy'))
 
         # Find the best channel (waveform site) for each good cluster
         waveform_idx = max_channel[main_template_id]
@@ -225,8 +249,8 @@ class Kilosort():
         # Calculate mean waveforms for good clusters
         waveform = np.zeros((self.n_unit, temp_unwhitened.shape[1], 14))
         for i, c in enumerate(good_id):
-            spikes = spike_templates[cluster == c]
-            amplitudes_c = amplitudes[cluster == c].reshape(-1, 1, 1)
+            spikes = self.spike_templates[self.spike_clusters == c]
+            amplitudes_c = self.amplitudes[self.spike_clusters == c].reshape(-1, 1, 1)
             mean_waveform = (temp_unwhitened[spikes] * amplitudes_c).mean(axis=0)
 
             # We don't know the exact scaling factor that was used by Kilosort, but it was approximately 10.
@@ -234,6 +258,18 @@ class Kilosort():
         self.waveform = waveform
     
         self.Vpp = np.ptp(self.waveform, axis=(1, 2))  # peak-to-peak amplitude in arbitrary unit
+    
+    def load_metrics(self):
+        self.metrics = calculate_metrics(
+            self.spike_times,
+            self.spike_clusters,
+            self.spike_templates,
+            self.amplitudes,
+            self.channel_map,
+            self.pc_features,
+            self.pc_feature_ind,
+            DEFAULT_PARAMS
+        )
 
     def load_waveforms(self, spk_range=(-20, 41), sample_range=(0, 30000*300)):
         """
@@ -417,7 +453,8 @@ class Kilosort():
 if __name__ == "__main__":
     fn = finder("C:\\SGL_DATA", "params.py$", folder=True)
     ks = Kilosort(fn)
-    ks.save()
+    breakpoint()
+    # ks.save()
     # ks.plot(idx=0)
 
     # import matplotlib.pyplot as plt
