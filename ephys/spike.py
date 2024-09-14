@@ -31,11 +31,12 @@ class Spike:
         for key, value in self.__dict__.items():
             if key.startswith('__'):
                 continue
-            result.append(key)
             if isinstance(value, pd.DataFrame):
+                result.append(key)
                 for col in value.columns:
                     result.append(f"    {col}: {value[col].shape}")
             elif isinstance(value, dict):
+                result.append(key)
                 for k, v in value.items():
                     if isinstance(v, np.ndarray):
                         result.append(f"    {k}: {v.shape}")
@@ -46,7 +47,9 @@ class Spike:
                     elif isinstance(v, (int, float)):
                         result.append(f"    {k}: {v}")
             elif isinstance(value, str):
-                result.append(f"    {value}")
+                result.append(f"{key}: {value}")
+            elif isinstance(value, np.ndarray):
+                result.append(f"{key}: {value.shape}")
         return "\n".join(result)
     
     @property

@@ -107,11 +107,12 @@ class Kilosort():
         for key, value in self.__dict__.items():
             if key.startswith('__'):
                 continue
-            result.append(key)
             if isinstance(value, pd.DataFrame):
+                result.append(key)
                 for col in value.columns:
                     result.append(f"    {col}: {value[col].shape}")
             elif isinstance(value, dict):
+                result.append(key)
                 for k, v in value.items():
                     if isinstance(v, np.ndarray):
                         result.append(f"    {k}: {v.shape}")
@@ -122,7 +123,9 @@ class Kilosort():
                     elif isinstance(v, (int, float)):
                         result.append(f"    {k}: {v}")
             elif isinstance(value, str):
-                result.append(f"    {value}")
+                result.append(f"{key}: {value}")
+            elif isinstance(value, np.ndarray):
+                result.append(f"{key}: {value.shape}")
         return "\n".join(result)
 
     def load_meta(self):
@@ -212,25 +215,25 @@ class Kilosort():
             load_all = True
         
         if not load_all:
-            good_id = cluster_info[cluster_info['group'] == 'good'].cluster_id.values
+            self.good_id = cluster_info[cluster_info['group'] == 'good'].cluster_id.values
         else:
-            good_id = np.unique(self.spike_clusters)
+            self.good_id = np.unique(self.spike_clusters)
         
         main_template_id = [np.bincount(self.spike_templates[self.spike_clusters == c]).argmax() 
-                            for c in good_id]
+                            for c in self.good_id]
 
-        self.n_unit = len(good_id)
+        self.n_unit = len(self.good_id)
         
         # Convert spike times to seconds and group by good clusters
-        self.time = np.array([self.spike_times[self.spike_clusters == c] / self.sample_rate for c in good_id], dtype=object)
-        self.frame = np.array([self.spike_times[self.spike_clusters == c] for c in good_id], dtype=object)
+        self.time = np.array([self.spike_times[self.spike_clusters == c] / self.sample_rate for c in self.good_id], dtype=object)
+        self.frame = np.array([self.spike_times[self.spike_clusters == c] for c in self.good_id], dtype=object)
         
         # Calculate firing rates for good clusters
         self.firing_rate = [len(i) / (self.spike_times.max() / self.sample_rate) for i in self.time]
 
         # Load and calculate mean spike positions for good clusters
         self.position = np.array([np.median(self.spike_positions[self.spike_clusters == c], axis=0) 
-                                  for c in good_id])
+                                  for c in self.good_id])
     
         # Load templates and amplitudes
         temp_unwhitened = self.templates @ self.winv
@@ -248,7 +251,7 @@ class Kilosort():
         
         # Calculate mean waveforms for good clusters
         waveform = np.zeros((self.n_unit, temp_unwhitened.shape[1], 14))
-        for i, c in enumerate(good_id):
+        for i, c in enumerate(self.good_id):
             spikes = self.spike_templates[self.spike_clusters == c]
             amplitudes_c = self.amplitudes[self.spike_clusters == c].reshape(-1, 1, 1)
             mean_waveform = (temp_unwhitened[spikes] * amplitudes_c).mean(axis=0)
@@ -259,14 +262,19 @@ class Kilosort():
     
         self.Vpp = np.ptp(self.waveform, axis=(1, 2))  # peak-to-peak amplitude in arbitrary unit
     
-    def load_metrics(self):
+    def load_metrics(self, only_good=True):
+        if only_good:
+            in_cluster = np.isin(self.spike_clusters, self.good_id)
+        else:
+            in_cluster = np.full(len(self.spike_clusters), True)
+
         self.metrics = calculate_metrics(
-            self.spike_times,
-            self.spike_clusters,
-            self.spike_templates,
-            self.amplitudes,
+            self.spike_times[in_cluster] / self.sample_rate,
+            self.spike_clusters[in_cluster],
+            self.spike_templates[in_cluster],
+            self.amplitudes[in_cluster],
             self.channel_map,
-            self.pc_features,
+            self.pc_features[in_cluster],
             self.pc_feature_ind,
             DEFAULT_PARAMS
         )
@@ -392,6 +400,7 @@ class Kilosort():
             'channel_map': self.channel_map,
             'channel_position': self.channel_position,
             'cluster_group': self.cluster_group,
+            'good_id': self.good_id,
             'meta': self.meta,
             'n_channel': self.n_channel,
             'file_create_time': self.file_create_time,
