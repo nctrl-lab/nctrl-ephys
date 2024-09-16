@@ -30,6 +30,7 @@ def saveks(path):
     ks.load_waveforms()
     ks.load_sync()
     ks.load_nidq()
+    ks.load_metrics()
     ks.save()
 
 @main.command()

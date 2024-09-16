@@ -262,19 +262,14 @@ class Kilosort():
     
         self.Vpp = np.ptp(self.waveform, axis=(1, 2))  # peak-to-peak amplitude in arbitrary unit
     
-    def load_metrics(self, only_good=True):
-        if only_good:
-            in_cluster = np.isin(self.spike_clusters, self.good_id)
-        else:
-            in_cluster = np.full(len(self.spike_clusters), True)
-
+    def load_metrics(self):
         self.metrics = calculate_metrics(
-            self.spike_times[in_cluster] / self.sample_rate,
-            self.spike_clusters[in_cluster],
-            self.spike_templates[in_cluster],
-            self.amplitudes[in_cluster],
-            self.channel_map,
-            self.pc_features[in_cluster],
+            self.spike_times / self.sample_rate,
+            self.spike_clusters,
+            self.spike_templates,
+            self.amplitudes,
+            self.channel_position,
+            self.pc_features,
             self.pc_feature_ind,
             DEFAULT_PARAMS
         )
@@ -409,10 +404,15 @@ class Kilosort():
             'sample_rate': self.sample_rate,
         }
 
-        if self.waveform_raw is not None:
+        if hasattr(self, 'waveform_raw'):
             spike.update({
                 'waveform_raw': self.waveform_raw,
                 'Vpp_raw': self.Vpp_raw
+            })
+        
+        if hasattr(self, 'metrics'):
+            spike.update({
+                'metrics': self.metrics
             })
         
         data = {'spike': spike}
@@ -462,7 +462,7 @@ class Kilosort():
 if __name__ == "__main__":
     fn = finder("C:\\SGL_DATA", "params.py$", folder=True)
     ks = Kilosort(fn)
-    breakpoint()
+    ks.load_metrics()
     # ks.save()
     # ks.plot(idx=0)
 
