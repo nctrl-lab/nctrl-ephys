@@ -22,7 +22,7 @@ from scipy.ndimage.filters import gaussian_filter1d
 DEFAULT_PARAMS = {
     'isi_threshold': 0.0015,
     'min_isi': 0.0,
-    'num_channels_to_compare': 3,
+    'num_channels_to_compare': 4,
     'max_spikes_for_unit': 500,
     'max_spikes_for_nn': 10000,
     'n_neighbors': 4,
@@ -40,6 +40,9 @@ def calculate_metrics(spike_times,
                       channel_pos,
                       pc_features,
                       pc_feature_ind,
+                      energy,
+                      pc1,
+                      waveform_idx_all,
                       params):
     """
     Calculate quality metrics for all units on one probe.
@@ -60,6 +63,12 @@ def calculate_metrics(spike_times,
         PC features for all spikes.
     pc_feature_ind : array-like or None
         Indices of PC features.
+    energy : array-like
+        Energy of all spikes.
+    pc1 : array-like
+        PC1 of all spikes.
+    waveform_idx_all : array-like
+        Channel indices of all templates.
     params : dict
         Dictionary of parameters for metric calculations.
 
@@ -118,6 +127,7 @@ def calculate_metrics(spike_times,
         print("Calculating PC-based metrics")
         isolation_distance, l_ratio, d_prime, nn_hit_rate, nn_miss_rate = calculate_pc_metrics(
             spike_clusters, spike_templates, pc_features, pc_feature_ind, 
+            energy, pc1, waveform_idx_all,
             channel_pos, params['num_channels_to_compare'], 
             params['max_spikes_for_unit'], params['max_spikes_for_nn'], params['n_neighbors'],
             params['do_parallel']
@@ -241,28 +251,30 @@ def calculate_amplitude_cutoff(spike_clusters, amplitudes, total_units):
 
 def calculate_pc_metrics_one_cluster(cluster_peak_channels, idx, cluster_id, cluster_ids,
                                      nearest_channels, pc_features, pc_feature_ind,
+                                     energy, pc1, cluster_channel_indices,
                                      spike_clusters, spike_templates,
                                      max_spikes_for_cluster, max_spikes_for_nn, n_neighbors):
     peak_channel = cluster_peak_channels[idx]
     num_spikes_in_cluster = np.sum(spike_clusters == cluster_id)
 
-    channels_to_use = nearest_channels[peak_channel]
-    units_in_range = cluster_ids[np.isin(cluster_peak_channels, channels_to_use)]
 
-    spike_counts = np.array([np.sum(spike_clusters == cluster_id2) for cluster_id2 in units_in_range])
+    channels_to_use = nearest_channels[peak_channel]
+    units_valid = cluster_ids[np.isin(cluster_channel_indices, channels_to_use).sum(axis=1) == nearest_channels.shape[1]]
+
+    spike_counts = np.array([np.sum(spike_clusters == cluster_id2) for cluster_id2 in units_valid])
     relative_counts = spike_counts if num_spikes_in_cluster <= max_spikes_for_cluster else spike_counts / num_spikes_in_cluster * max_spikes_for_cluster
 
     all_pcs = []
     all_labels = []
 
-    for idx2, cluster_id2 in enumerate(units_in_range):
+    for idx2, cluster_id2 in enumerate(units_valid):
         subsample = int(relative_counts[idx2])
 
         pcs = get_unit_pcs(cluster_id2, spike_clusters, spike_templates,
-                           pc_feature_ind, pc_features, channels_to_use,
+                           pc_feature_ind, pc_features, energy, pc1, cluster_channel_indices, channels_to_use,
                            subsample=subsample)
 
-        if pcs is not None and pcs.ndim == 3:
+        if pcs is not None and pcs.ndim == 2:
             labels = np.full(pcs.shape[0], cluster_id2)
             all_pcs.append(pcs)
             all_labels.append(labels)
@@ -273,9 +285,7 @@ def calculate_pc_metrics_one_cluster(cluster_peak_channels, idx, cluster_id, clu
     else:
         all_pcs = np.zeros((0, pc_features.shape[1], len(channels_to_use)))
         all_labels = np.zeros(0)
-    
 
-    
     if (all_pcs.shape[0] > 10 and not np.all(all_labels == cluster_id) and
             (all_labels == cluster_id).sum() > 20 and channels_to_use.size > 0):
         all_pcs = all_pcs.reshape(all_pcs.shape[0], -1)
@@ -293,6 +303,9 @@ def calculate_pc_metrics(spike_clusters,
                          spike_templates,
                          pc_features,
                          pc_feature_ind,
+                         energy,
+                         pc1,
+                         waveform_idx_all,
                          channel_pos,
                          num_channels_to_compare,
                          max_spikes_for_cluster,
@@ -312,6 +325,12 @@ def calculate_pc_metrics(spike_clusters,
         PC features for all spikes.
     pc_feature_ind : np.ndarray
         Indices of PC features.
+    energy : np.ndarray
+        Energy of all spikes.
+    pc1 : np.ndarray
+        PC1 of all spikes.
+    waveform_idx_all : np.ndarray
+        Channel indices of all templates.
     channel_pos : np.ndarray
         Positions of channels.
     num_channels_to_compare : int
@@ -339,6 +358,7 @@ def calculate_pc_metrics(spike_clusters,
     template_peak_channels = np.zeros(len(template_ids), dtype='uint16')
     cluster_peak_channels = np.zeros(len(cluster_ids), dtype='uint16')
 
+
     for idx, template_id in enumerate(template_ids):
         for_template = np.squeeze(spike_templates == template_id)
         pc_max = np.argmax(np.mean(pc_features[for_template, 0, :], 0))
@@ -350,10 +370,13 @@ def calculate_pc_metrics(spike_clusters,
         template_positions = np.where(np.isin(template_ids, templates_for_unit))[0]
         cluster_peak_channels[idx] = np.median(template_peak_channels[template_positions])
 
+    cluster_channel_indices = waveform_idx_all[cluster_peak_channels]
+
     def process_cluster(idx, cluster_id):
         return calculate_pc_metrics_one_cluster(
             cluster_peak_channels, idx, cluster_id, cluster_ids,
             nearest_channels, pc_features, pc_feature_ind,
+            energy, pc1, cluster_channel_indices,
             spike_clusters, spike_templates,
             max_spikes_for_cluster, max_spikes_for_nn, n_neighbors
         )
@@ -822,7 +845,8 @@ def features_intersect(pc_feature_ind, these_channels):
     return np.array(list(intersect))
 
 
-def get_unit_pcs(unit_id, spike_clusters, spike_templates, pc_feature_ind, pc_features, channels_to_use, subsample):
+def get_unit_pcs(unit_id, spike_clusters, spike_templates, pc_feature_ind, pc_features,
+                 energy, pc1, cluster_channel_indices, channels_to_use, subsample):
     """
     Return PC features for one unit
 
@@ -838,6 +862,12 @@ def get_unit_pcs(unit_id, spike_clusters, spike_templates, pc_feature_ind, pc_fe
         Channels used for PC calculation for each unit
     pc_features : np.ndarray
         Array of all PC features
+    energy : np.ndarray
+        Energy of all spikes
+    pc1 : np.ndarray
+        PC1 of all spikes
+    cluster_channel_indices : np.ndarray
+        Channels used for PC calculation for each unit
     channels_to_use : np.ndarray
         Channels to use for calculating metrics
     subsample : int
@@ -850,22 +880,27 @@ def get_unit_pcs(unit_id, spike_clusters, spike_templates, pc_feature_ind, pc_fe
     """
     inds_for_unit = np.where(spike_clusters == unit_id)[0]
     spikes_to_use = np.random.permutation(inds_for_unit)[:subsample]
-    unique_template_ids = np.unique(spike_templates[spikes_to_use])
+    unique_template_ids = np.unique(spike_clusters[spikes_to_use])
     unit_PCs = []
 
     for template_id in unique_template_ids:
-        index_mask = spikes_to_use[spike_templates[spikes_to_use] == template_id]
-        these_inds = pc_feature_ind[template_id, :]
+        index_mask = spikes_to_use[spike_clusters[spikes_to_use] == template_id]
+        these_inds = cluster_channel_indices[template_id]
 
         pc_array = [
-            pc_features[index_mask, :, np.argwhere(these_inds == i)[0][0]]
+            pc1[index_mask, np.argwhere(these_inds == i)[0][0]]
+            for i in channels_to_use if i in these_inds
+        ]
+
+        energy_array = [
+            energy[index_mask, np.argwhere(these_inds == i)[0][0]]
             for i in channels_to_use if i in these_inds
         ]
 
         if len(pc_array) < len(channels_to_use):
             continue
 
-        unit_PCs.append(np.stack(pc_array, axis=-1))
+        unit_PCs.append(np.stack(pc_array + energy_array, axis=-1))
 
     return np.concatenate(unit_PCs) if unit_PCs else None
 
