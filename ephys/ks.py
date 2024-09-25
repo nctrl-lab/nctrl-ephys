@@ -232,6 +232,7 @@ class Kilosort():
             self.cluster_id = np.unique(self.spike_clusters)
             self.cluster_group = np.full_like(self.cluster_id, 'nan')
             load_all = True
+        self.cluster_id_inv = {c: i for i, c in enumerate(self.cluster_id)}
         
         tprint("Finished cluster information")
         
@@ -381,7 +382,8 @@ class Kilosort():
             self.pc_feature_ind,
             self.energy,
             self.pc1,
-            self.cluster_template_id,
+            self.waveform_idx,
+            self.cluster_id_inv,
             DEFAULT_PARAMS
         )
 
@@ -516,8 +518,8 @@ class Kilosort():
 
 if __name__ == "__main__":
     ks = Kilosort("C:\\SGL_DATA\\Y02_20240731_M1_g0\\Y02_20240731_M1_g0_imec0\\kilosort4")
-    ks.load_waveforms()
-    # ks.load_metrics()
+    # ks.load_waveforms()
+    ks.load_metrics()
     breakpoint()
     # ks.save()
     # ks.plot(idx=0)
