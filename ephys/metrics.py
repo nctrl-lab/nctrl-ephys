@@ -29,7 +29,7 @@ DEFAULT_PARAMS = {
     'n_silhouette': 10000,
     'drift_metrics_interval_s': 10,
     'drift_metrics_min_spikes_per_interval': 100.0,
-    'do_parallel': False
+    'do_parallel': True
 }
 
 
