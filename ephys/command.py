@@ -39,9 +39,14 @@ def saveks(path, metric):
 @click.option('--path', type=click.Path(exists=True), default=None)
 def bmi(path):
     from .bmi import BMI
+    from .tdms import save_tdms
+    from .utils import finder
     bmi = BMI(path)
     bmi.save_mua()
-    bmi.save_nidq()
+    if any(file.endswith('.nidq.meta') for file in os.listdir(path)):
+        bmi.save_nidq()
+    else:
+       save_tdms(path=bmi.path)
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
