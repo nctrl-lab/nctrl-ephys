@@ -27,6 +27,10 @@ def saveks(path):
         raise ValueError('No params.py found in the directory')
     fd = os.path.dirname(fn)
     ks = Kilosort(fd)
+    ks.load_waveforms()
+    ks.load_sync()
+    ks.load_nidq()
+    ks.load_metrics()
     ks.save()
 
 @main.command()
