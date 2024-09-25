@@ -735,8 +735,6 @@ def mahalanobis_metrics(all_pcs: np.ndarray, all_labels: np.ndarray, this_unit_i
     l_ratio = np.sum(1 - chi2.cdf(mahalanobis_other**2, dof)) / len(mahalanobis_self)
     isolation_distance = mahalanobis_other[n-1]**2
 
-    breakpoint()
-
     return isolation_distance, l_ratio
 
 
