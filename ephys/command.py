@@ -19,7 +19,8 @@ def runks(path):
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
-def saveks(path):
+@click.option('--metric', is_flag=True)
+def saveks(path, metric):
     from .utils import finder
     from .ks import Kilosort
     fn = finder(path, 'params.py$')
@@ -30,7 +31,8 @@ def saveks(path):
     ks.load_waveforms()
     ks.load_sync()
     ks.load_nidq()
-    ks.load_metrics()
+    if metric:
+        ks.load_metrics()
     ks.save()
 
 @main.command()
