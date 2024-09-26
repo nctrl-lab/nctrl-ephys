@@ -33,7 +33,7 @@ def run_ks4(path=None, settings=None):
             probe = get_probe(meta)
             settings['n_chan_bin'] = meta['nSavedChans']
             settings['data_dir'] = os.path.dirname(fn)
-
+            
             run_kilosort(settings=settings, probe=probe)
 
 

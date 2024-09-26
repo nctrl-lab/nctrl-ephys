@@ -203,7 +203,6 @@ def read_bin(filename: str, n_channel: int = 385, dtype: str = 'int16',
     FileNotFoundError
         If the specified file does not exist.
     """
-    
     if not os.path.exists(filename):
         raise FileNotFoundError(f"The file {filename} does not exist.")
 

@@ -26,7 +26,8 @@ def read_tdms(tdms_fn, threshold=2.5):
 
     return pd.concat(events, ignore_index=True)
 
-def save_tdms(tdms_fns=None):
+def save_tdms(tdms_fns=None,path=None):
+    tdms_fns = finder(path=path, pattern=r'\.tdms$', multiple=True,  ask=False)
     if tdms_fns is None:
         path = os.path.join(os.path.expanduser("~"), 'Documents', 'Measurement Computing', 'DAQami')
         tdms_fns = finder(path=path, pattern=r'\.tdms$', multiple=True)

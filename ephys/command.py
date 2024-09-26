@@ -20,7 +20,8 @@ def runks(path):
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
 @click.option('--metric', is_flag=True)
-def saveks(path, metric):
+@click.option('--bmi', is_flag=True)
+def saveks(path, metric, bmi):
     from .utils import finder
     from .ks import Kilosort
     fn = finder(path, 'params.py$')
@@ -29,19 +30,26 @@ def saveks(path, metric):
     fd = os.path.dirname(fn)
     ks = Kilosort(fd)
     ks.load_waveforms()
-    ks.load_sync()
-    ks.load_nidq()
+    if not bmi:
+        ks.load_sync()
+        ks.load_nidq()
     if metric:
         ks.load_metrics()
     ks.save()
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
-def bmi(path):
+@click.option('--nidq', is_flag=True)
+@click.option('--tdms', is_flag=True)
+def bmi(path, nidq, tdms):
     from .bmi import BMI
+    from .tdms import save_tdms
     bmi = BMI(path)
     bmi.save_mua()
-    bmi.save_nidq()
+    if nidq:
+        bmi.save_nidq()
+    if tdms:
+       save_tdms(path=bmi.path)
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
