@@ -33,7 +33,7 @@ def run_ks4(path=None, settings=None):
             probe = get_probe(meta)
             settings['n_chan_bin'] = meta['nSavedChans']
             settings['data_dir'] = os.path.dirname(fn)
-
+            
             run_kilosort(settings=settings, probe=probe)
 
 
@@ -417,7 +417,7 @@ class Kilosort():
             return
 
         tprint(f"Loading nidq data from {nidq_fn}")
-        data_nidq = read_digital(nidq_fn)
+        data_nidq = read_digital(nidq_fn,dtype='int32')
         
         df_nidq = data_nidq[data_nidq['chan'] > 0]
         df_sync = data_nidq[(data_nidq['chan'] == 0) & (data_nidq['type'] == 1)]

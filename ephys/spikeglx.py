@@ -152,7 +152,7 @@ def read_digital(filename, dtype='uint16'):
     meta = read_meta(meta_fn)
     n_channel = meta['nSavedChans']
     sample_rate = meta.get('imSampRate') or meta.get('niSampRate')
-    channel_idx = get_channel_idx(meta, analog=False)
+    channel_idx = get_channel_idx(meta,analog=False)
 
     # Read the digital data
     data = read_bin(bin_fn, n_channel=n_channel, dtype=dtype, channel_idx=channel_idx)
@@ -203,7 +203,6 @@ def read_bin(filename: str, n_channel: int = 385, dtype: str = 'int16',
     FileNotFoundError
         If the specified file does not exist.
     """
-    
     if not os.path.exists(filename):
         raise FileNotFoundError(f"The file {filename} does not exist.")
 
