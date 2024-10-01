@@ -40,22 +40,14 @@ def saveks(path, metric, bmi):
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
 @click.option('--nidq', is_flag=True)
-@click.option('--tdms', is_flag=True)
-def bmi(path, nidq, tdms):
+def bmi(path, nidq):
     from .bmi import BMI
-    from .tdms import save_tdms
     bmi = BMI(path)
     bmi.save_mua()
     if nidq:
         bmi.save_nidq()
-    if tdms:
-       save_tdms(path=bmi.path)
-
-@main.command()
-@click.option('--path', type=click.Path(exists=True), default=None)
-def tdms(path):
-    from .tdms import save_tdms
-    save_tdms(path)
+    else:
+        bmi.save_tdms()
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
