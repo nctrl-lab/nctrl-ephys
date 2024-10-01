@@ -189,7 +189,7 @@ def read_bin(filename: str, n_channel: int = 385, dtype: str = 'int16',
     dtype : str, optional
         Data type of the binary file (default is 'int16').
     channel_idx : array-like or slice, optional
-        Indices of channels to read. If None, channels 0-383 are read.
+        Indices of channels to read. If None, all channels are read.
     sample_range : tuple of int, optional
         Range of samples to read, specified as (start, end). If None, all samples are read.
 
@@ -206,9 +206,6 @@ def read_bin(filename: str, n_channel: int = 385, dtype: str = 'int16',
     if not os.path.exists(filename):
         raise FileNotFoundError(f"The file {filename} does not exist.")
 
-    if channel_idx is None:
-        channel_idx = slice(0, n_channel)  # Default to reading channels 0-383
-
     n_sample_file = os.path.getsize(filename) // (n_channel * np.dtype(dtype).itemsize)
     if sample_range is None:
         sample_range = (0, n_sample_file)
@@ -223,7 +220,10 @@ def read_bin(filename: str, n_channel: int = 385, dtype: str = 'int16',
 
     tprint(f"Loading {filename}, range={sample_range}, n_sample={n_sample}, offset={offset}")
     data = np.memmap(filename, dtype=dtype, mode='r', shape=(n_sample, n_channel), offset=offset)
-    return np.ascontiguousarray(data[:, channel_idx])
+    if channel_idx is None:
+        return data
+    else:
+        return np.ascontiguousarray(data[:, channel_idx])
 
 
 def read_meta(filename):

@@ -6,7 +6,7 @@ import pandas as pd
 import scipy.io as sio
 from sklearn.decomposition import PCA
 
-from .spikeglx import read_meta, read_analog, read_digital, get_uV_per_bit, get_channel_idx
+from .spikeglx import read_meta, read_analog, read_digital, read_bin, get_uV_per_bit, get_channel_idx
 from .utils import finder, confirm, savemat_safe, tprint, sync
 
 from .metrics import calculate_metrics, DEFAULT_PARAMS
@@ -278,8 +278,7 @@ class Kilosort():
         self.waveform_channel = self.channel_map[self.waveform_idx] # actual channel numbers (n_unit, 14)
         self.Vpp = np.ptp(self.waveform, axis=(1, 2))  # peak-to-peak amplitude
 
-        tprint("Finished waveform")
-
+        tprint("Finished waveform (template)")
 
     def load_waveforms(self, spk_range=(-20, 41), sample_range=(0, 30000*300)):
         """
@@ -317,6 +316,7 @@ class Kilosort():
 
         n_spk = len(spks)
         spk_width = spk_range[1] - spk_range[0]
+        time_indices = np.arange(spk_width)
 
         spkwav = np.full((n_spk, spk_width, 14), np.nan)
         batch_starts = np.arange(n_batch) * n_sample_per_batch
@@ -329,10 +329,9 @@ class Kilosort():
             mask = (spks >= batch_start) & (spks < batch_end)
             spk, spk_idx, spk_no = spks[mask], idx[mask], np.where(mask)[0]
             
-            starts = spk + spk_range[0] - batch_start
+            starts = spk - batch_start
             starts[i_batch == 0] += spk_range[0]  # Adjust for first batch
             channels = self.waveform_channel[spk_idx]
-            time_indices = np.arange(spk_width)
             indices = (starts[:, None] + time_indices[None, :])[:, :, None]
             indices = np.broadcast_to(indices, (len(spk_no), spk_width, 14))
             waveforms = data[indices, channels[:, None]]
@@ -342,7 +341,9 @@ class Kilosort():
                                       for i_unit in np.unique(idx)])
         self.Vpp_raw = np.ptp(self.waveform_raw, axis=(1, 2))
 
-    def load_waveforms_full(self, spk_range=(-20, 41), sample_range=(0, 30000*180)):
+        tprint("Finished waveform (raw)")
+
+    def load_waveforms_full(self, spk_range=(-20, 41), sample_range=(0, 30000*300)):
         """
         Load waveforms and related metrics from the raw data file
         
@@ -351,7 +352,7 @@ class Kilosort():
         spk_range : tuple, optional
             The range of spike times to load, in samples. Default is (-20, 41).
         sample_range : tuple, optional
-            The range of samples to load. Default is (0, 30000*180).
+            The range of samples to load. Default is (0, 30000*300).
         
         Notes
         -----
@@ -378,50 +379,54 @@ class Kilosort():
 
         n_spk = len(spks)
         spk_width = spk_range[1] - spk_range[0]
+        time_indices = np.arange(spk_width)
 
-        spkwav = np.full((n_spk, spk_width, 14), np.nan)
+        # get the main 14 channels for each cluster
+        main_template_for_each_cluster = np.array([
+            np.bincount(self.spike_templates[self.spike_clusters == c]).argmax()
+            for c in self.cluster_id
+        ])
+        main_template_ind = np.ptp(self.templates @ self.winv, axis=1).argmax(axis=-1)
+        main_cluster_ind = main_template_ind[main_template_for_each_cluster]
+        self.cluster_ind = nearest_channel(self.channel_position, main_cluster_ind)
+        cluster_channels = self.channel_map[self.cluster_ind]
+
+        spkwav = np.zeros((n_spk, spk_width, 14), dtype=np.int16)
         batch_starts = np.arange(n_batch) * n_sample_per_batch
         batch_ends = np.minimum(batch_starts + n_sample_per_batch, sample_range[1])
 
         for i_batch, (batch_start, batch_end) in enumerate(zip(batch_starts, batch_ends)):
             tprint(f"Loading waveforms from {self.data_file_path} (batch {i_batch+1}/{n_batch})")
-            data = read_analog(self.data_file_path, sample_range=(batch_start+spk_range[0], batch_end+spk_range[1]))
+            data = read_bin(self.data_file_path, sample_range=(batch_start+spk_range[0], batch_end+spk_range[1]))
 
             mask = (spks >= batch_start) & (spks < batch_end)
             spk, spk_idx, spk_no = spks[mask], idx[mask], np.where(mask)[0]
             
-            starts = spk + spk_range[0] - batch_start
+            starts = spk - batch_start
             starts[i_batch == 0] += spk_range[0]  # Adjust for first batch
-            channels = self.waveform_channel[spk_idx]
-            time_indices = np.arange(spk_width)
+            channels = cluster_channels[spk_idx]
             indices = (starts[:, None] + time_indices[None, :])[:, :, None]
             indices = np.broadcast_to(indices, (len(spk_no), spk_width, 14))
             waveforms = data[indices, channels[:, None]]
             spkwav[spk_no] = waveforms - waveforms[:, 0:1, :]
+            del data
 
-        self.energy = np.full((self.spike_times.shape[0], spkwav.shape[2]), np.nan)
+        self.energy = np.full((self.spike_times.shape[0], 14), np.nan)
         self.energy[in_range] = np.linalg.norm(spkwav, axis=1)
-        spkwav_norm = spkwav / self.energy[in_range, np.newaxis, :]
+        spkwav = spkwav / self.energy[in_range, np.newaxis, :]
 
-        self.pc1 = np.full_like(self.energy, np.nan)
-        channel_idx = self.waveform_channel[idx]
-        unique_channels = np.unique(channel_idx)
+        channel_ind_idx = self.cluster_ind[idx]
+        pc1 = np.full((spkwav.shape[0], spkwav.shape[2]), np.nan)
+        for channel in np.unique(self.cluster_ind):
+            in_channel = np.where(channel_ind_idx == channel)
+            waves = spkwav[in_channel[0], :, in_channel[1]]
+            pc1[in_channel[0], in_channel[1]] = PCA(n_components=1).fit_transform(waves).flatten()
         
-        pc1 = np.full((spkwav_norm.shape[0], spkwav_norm.shape[2]), np.nan)
-        for channel in unique_channels:
-            in_channel = np.where(channel_idx == channel)
-            waves = spkwav_norm[in_channel[0], :, in_channel[1]]
-            pc1_temp = PCA(n_components=1).fit_transform(waves)
-            pc1[in_channel[0], in_channel[1]] = pc1_temp.flatten()
-        
+        self.pc1 = np.full((self.spike_times.shape[0], 14), np.nan)
         self.pc1[in_range] = pc1
 
         np.save(os.path.join(self.path, 'energy.npy'), self.energy)
         np.save(os.path.join(self.path, 'pc1.npy'), self.pc1)
-
-        self.waveform_raw = np.array([np.nanmedian(spkwav[idx == i_unit], axis=0) 
-                                      for i_unit in np.unique(idx)])
-        self.Vpp_raw = np.ptp(self.waveform_raw, axis=(1, 2))
 
     def load_metrics(self):
         self.metrics = calculate_metrics(
