@@ -230,7 +230,7 @@ class Kilosort():
         else:
             tprint("No cluster_info.tsv found. Loading all clusters.")
             self.cluster_id = np.unique(self.spike_clusters)
-            self.cluster_group = np.full_like(self.cluster_id, 'nan')
+            self.cluster_group = np.full_like(self.cluster_id, np.nan)
             load_all = True
         self.cluster_id_inv = {c: i for i, c in enumerate(self.cluster_id)}
         
@@ -240,11 +240,10 @@ class Kilosort():
         
         self.cluster_template_id = np.array([
             np.bincount(self.spike_templates[self.spike_clusters == c]).argmax()
-            for c in self.cluster_id
+            for c in self.cluster_good
         ]) # main template id for each cluster
 
-        self.n_unit = len(self.cluster_id)
-        self.n_unit_good = len(self.cluster_good)
+        self.n_unit = len(self.cluster_good)
         
         # Spike times 
         self.time = np.array([self.spike_times[self.spike_clusters == c] / self.sample_rate for c in self.cluster_good], dtype=object)
@@ -259,12 +258,11 @@ class Kilosort():
         temp_unwhitened = self.templates @ self.winv
         template_idx = np.ptp(temp_unwhitened, axis=1).argmax(axis=-1) # main index for each template
         cluster_idx = template_idx[self.cluster_template_id] # main index for each cluster
+
         self.waveform_idx = nearest_channel(self.channel_position, cluster_idx) # (n_unit, 14)
-        self.waveform_position = self.channel_position[self.waveform_idx] # channel positions on the probe(n_unit, 14, 2)
-        self.waveform_channel = self.channel_map[self.waveform_idx] # actual channel numbers (n_unit, 14)
 
         waveform = np.zeros((self.n_unit, temp_unwhitened.shape[1], 14))
-        for i, c in enumerate(self.cluster_id):
+        for i, c in enumerate(self.cluster_good):
             cluster_mask = self.spike_clusters == c
             spike_templates = self.spike_templates[cluster_mask]
             template_ids, counts = np.unique(spike_templates, return_counts=True)
@@ -276,19 +274,12 @@ class Kilosort():
             # We don't know the exact scaling factor that was used by Kilosort, but it was approximately 10.
             waveform[i] = mean_waveform[:, self.waveform_idx[i]] / 10
         self.waveform = waveform
+        self.waveform_position = self.channel_position[self.waveform_idx] # channel positions on the probe(n_unit, 14, 2)
+        self.waveform_channel = self.channel_map[self.waveform_idx] # actual channel numbers (n_unit, 14)
         self.Vpp = np.ptp(self.waveform, axis=(1, 2))  # peak-to-peak amplitude
 
         tprint("Finished waveform")
 
-        # # Save waveforms for good clusters
-        is_good = np.isin(self.cluster_id, self.cluster_good)
-        self.waveform_idx_good = self.waveform_idx[is_good]
-        self.waveform_channel_good = self.waveform_channel[is_good]
-        self.waveform_position_good = self.waveform_position[is_good]
-        self.waveform_good = self.waveform[is_good]
-        self.Vpp_good = self.Vpp[is_good]
-
-        tprint("Finished waveform_good")
 
     def load_waveforms(self, spk_range=(-20, 41), sample_range=(0, 30000*300)):
         """
@@ -300,6 +291,67 @@ class Kilosort():
             The range of spike times to load, in samples. Default is (-20, 41).
         sample_range : tuple, optional
             The range of samples to load. Default is (0, 30000*300).
+        
+        Notes
+        -----
+        This will calculate the energy and the first PC for each waveform.
+        """
+        if not os.path.exists(self.data_file_path):
+            print(f"Data file {self.data_file_path} does not exist")
+            return
+
+        MAX_MEMORY = int(4e9)
+
+        n_sample_file = self.meta['fileSizeBytes'] // (self.meta['nSavedChans'] * np.dtype(np.int16).itemsize)
+        sample_range = (max(0, sample_range[0]), min(sample_range[1], n_sample_file))
+        
+        n_sample = sample_range[1] - sample_range[0]
+        n_sample_per_batch = min(int(MAX_MEMORY / self.n_channel / np.dtype(np.int16).itemsize), n_sample)
+        n_batch = int(np.ceil(n_sample / n_sample_per_batch))
+
+        spks = np.concatenate(self.frame)
+        idx = np.concatenate([i * np.ones_like(f) for i, f in enumerate(self.frame)])
+
+        in_range = (spks >= sample_range[0] - spk_range[0]) & (spks < sample_range[1] - spk_range[1])
+        spks, idx = spks[in_range], idx[in_range]
+
+        n_spk = len(spks)
+        spk_width = spk_range[1] - spk_range[0]
+
+        spkwav = np.full((n_spk, spk_width, 14), np.nan)
+        batch_starts = np.arange(n_batch) * n_sample_per_batch
+        batch_ends = np.minimum(batch_starts + n_sample_per_batch, sample_range[1])
+
+        for i_batch, (batch_start, batch_end) in enumerate(zip(batch_starts, batch_ends)):
+            tprint(f"Loading waveforms from {self.data_file_path} (batch {i_batch+1}/{n_batch})")
+            data = read_analog(self.data_file_path, sample_range=(batch_start+spk_range[0], batch_end+spk_range[1]))
+
+            mask = (spks >= batch_start) & (spks < batch_end)
+            spk, spk_idx, spk_no = spks[mask], idx[mask], np.where(mask)[0]
+            
+            starts = spk + spk_range[0] - batch_start
+            starts[i_batch == 0] += spk_range[0]  # Adjust for first batch
+            channels = self.waveform_channel[spk_idx]
+            time_indices = np.arange(spk_width)
+            indices = (starts[:, None] + time_indices[None, :])[:, :, None]
+            indices = np.broadcast_to(indices, (len(spk_no), spk_width, 14))
+            waveforms = data[indices, channels[:, None]]
+            spkwav[spk_no] = waveforms - waveforms[:, 0:1, :]
+
+        self.waveform_raw = np.array([np.nanmedian(spkwav[idx == i_unit], axis=0) 
+                                      for i_unit in np.unique(idx)])
+        self.Vpp_raw = np.ptp(self.waveform_raw, axis=(1, 2))
+
+    def load_waveforms_full(self, spk_range=(-20, 41), sample_range=(0, 30000*180)):
+        """
+        Load waveforms and related metrics from the raw data file
+        
+        Parameters
+        ----------
+        spk_range : tuple, optional
+            The range of spike times to load, in samples. Default is (-20, 41).
+        sample_range : tuple, optional
+            The range of samples to load. Default is (0, 30000*180).
         
         Notes
         -----
@@ -518,9 +570,9 @@ class Kilosort():
 
 if __name__ == "__main__":
     ks = Kilosort("C:\\SGL_DATA\\Y02_20240731_M1_g0\\Y02_20240731_M1_g0_imec0\\kilosort4")
-    # ks.load_waveforms()
-    ks.load_metrics()
+    ks.load_waveforms()
     breakpoint()
+    ks.load_metrics()
     # ks.save()
     # ks.plot(idx=0)
 
