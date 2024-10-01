@@ -167,8 +167,11 @@ class Kilosort():
 
         if os.path.exists(os.path.join(self.path, 'energy.npy')):
             self.energy = np.load(os.path.join(self.path, 'energy.npy'))
+            tprint(f"Loaded energy: it has {np.isnan(self.energy[:, 0]).sum()}/{self.energy.shape[0]} NaN values")
+
         if os.path.exists(os.path.join(self.path, 'pc1.npy')):
             self.pc1 = np.load(os.path.join(self.path, 'pc1.npy'))
+            tprint(f"Loaded PC1: it has {np.isnan(self.pc1[:, 0]).sum()}/{self.pc1.shape[0]} NaN values")
 
     def load_kilosort(self, load_all=False):
         """
@@ -238,10 +241,15 @@ class Kilosort():
         
         self.cluster_good = self.cluster_id if load_all else self.cluster_id[self.cluster_group == 'good']
         
+
         self.cluster_template_id = np.array([
             np.bincount(self.spike_templates[self.spike_clusters == c]).argmax()
             for c in self.cluster_good
-        ]) # main template id for each cluster
+        ]) # main template id for good clusters
+        cluster_template_id_all = np.array([
+            np.bincount(self.spike_templates[self.spike_clusters == c]).argmax()
+            for c in self.cluster_id
+        ]) # main template id for all clusters
 
         self.n_unit = len(self.cluster_good)
         
@@ -258,7 +266,8 @@ class Kilosort():
         temp_unwhitened = self.templates @ self.winv
         template_idx = np.ptp(temp_unwhitened, axis=1).argmax(axis=-1) # main index for each template
         cluster_idx = template_idx[self.cluster_template_id] # main index for each cluster
-
+        cluster_idx_all = template_idx[cluster_template_id_all] # main index for all clusters
+        self.cluster_ind = nearest_channel(self.channel_position, cluster_idx_all)
         self.waveform_idx = nearest_channel(self.channel_position, cluster_idx) # (n_unit, 14)
 
         waveform = np.zeros((self.n_unit, temp_unwhitened.shape[1], 14))
@@ -336,6 +345,7 @@ class Kilosort():
             indices = np.broadcast_to(indices, (len(spk_no), spk_width, 14))
             waveforms = data[indices, channels[:, None]]
             spkwav[spk_no] = waveforms - waveforms[:, 0:1, :]
+            del data, waveforms
 
         self.waveform_raw = np.array([np.nanmedian(spkwav[idx == i_unit], axis=0) 
                                       for i_unit in np.unique(idx)])
@@ -343,7 +353,7 @@ class Kilosort():
 
         tprint("Finished waveform (raw)")
 
-    def load_waveforms_full(self, spk_range=(-20, 41), sample_range=(0, 30000*300)):
+    def load_energy_pc1(self, spk_range=(-20, 41), sample_range=(0, 30000*300), max_spike=1e6):
         """
         Load waveforms and related metrics from the raw data file
         
@@ -353,6 +363,8 @@ class Kilosort():
             The range of spike times to load, in samples. Default is (-20, 41).
         sample_range : tuple, optional
             The range of samples to load. Default is (0, 30000*300).
+        max_spike : int, optional
+            The maximum number of spikes to load. Default is 1e6.
         
         Notes
         -----
@@ -363,6 +375,9 @@ class Kilosort():
             return
 
         MAX_MEMORY = int(4e9)
+
+        if len(self.spike_times) > max_spike:
+            sample_range[1] = self.spike_times[max_spike]
 
         n_sample_file = self.meta['fileSizeBytes'] // (self.meta['nSavedChans'] * np.dtype(np.int16).itemsize)
         sample_range = (max(0, sample_range[0]), min(sample_range[1], n_sample_file))
@@ -382,13 +397,6 @@ class Kilosort():
         time_indices = np.arange(spk_width)
 
         # get the main 14 channels for each cluster
-        main_template_for_each_cluster = np.array([
-            np.bincount(self.spike_templates[self.spike_clusters == c]).argmax()
-            for c in self.cluster_id
-        ])
-        main_template_ind = np.ptp(self.templates @ self.winv, axis=1).argmax(axis=-1)
-        main_cluster_ind = main_template_ind[main_template_for_each_cluster]
-        self.cluster_ind = nearest_channel(self.channel_position, main_cluster_ind)
         cluster_channels = self.channel_map[self.cluster_ind]
 
         spkwav = np.zeros((n_spk, spk_width, 14), dtype=np.int16)
@@ -425,10 +433,14 @@ class Kilosort():
         self.pc1 = np.full((self.spike_times.shape[0], 14), np.nan)
         self.pc1[in_range] = pc1
 
+        tprint("Saving energy")
         np.save(os.path.join(self.path, 'energy.npy'), self.energy)
+        tprint("Saving PC1")
         np.save(os.path.join(self.path, 'pc1.npy'), self.pc1)
 
     def load_metrics(self):
+        if not hasattr(self, 'energy') or not hasattr(self, 'pc1'):
+            self.load_energy_pc1()
         self.metrics = calculate_metrics(
             self.spike_times / self.sample_rate,
             self.spike_clusters,
@@ -439,7 +451,7 @@ class Kilosort():
             self.pc_feature_ind,
             self.energy,
             self.pc1,
-            self.waveform_idx,
+            self.cluster_ind,
             self.cluster_id_inv,
             DEFAULT_PARAMS
         )
@@ -575,8 +587,8 @@ class Kilosort():
 
 if __name__ == "__main__":
     ks = Kilosort("C:\\SGL_DATA\\Y02_20240731_M1_g0\\Y02_20240731_M1_g0_imec0\\kilosort4")
-    ks.load_waveforms()
     breakpoint()
+    ks.load_waveforms()
     ks.load_metrics()
     # ks.save()
     # ks.plot(idx=0)
