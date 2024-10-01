@@ -10,6 +10,7 @@ import inquirer
 
 from .utils import finder, tprint, file_reorder, sync
 from .spikeglx import read_bin, read_digital
+from .tdms import read_tdms
 
 class BMI:
     def __init__(self, path=None, pattern=r'\.prb$'):
@@ -443,6 +444,39 @@ class BMI:
             tprint(f"Saving {fn}")
             self.nidq[i].to_pickle(fn.replace('.nidq.meta', '.nidq.pd'))
 
+    def load_tdms(self, path=None, sync_channel=1):
+        """
+        Load event data from tdms file.
+        """
+        if path is None:
+            path = self.path
+        
+        self.tdms_fn = finder(path, pattern=r'\.tdms$', multiple=True)
+        n_fn = len(self.tdms_fn)
+        self.tdms = [None] * n_fn
+        self.time_sync_tdms = [None] * n_fn
+        for i, fn in enumerate(self.tdms_fn):
+            self.tdms[i] = read_tdms(fn)
+            self.time_sync_tdms[i] = self.tdms[i].query(f"chan=={sync_channel} and type==1").time.values
+            time_sync_tdms_off = self.tdms[i].query(f"chan=={sync_channel} and type==0").time.values
+
+            pulse_duration = time_sync_tdms_off - self.time_sync_tdms[i]
+            if pulse_duration.min() < 0.090:
+                tprint(f"Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
+            
+            sync_func = sync(self.time_sync_tdms[i], self.time_sync_fpga)
+            self.tdms[i]['time_fpga'] = sync_func(self.tdms[i]['time'])
+
+    def save_tdms(self, path=None):
+        if path is None:
+            path = self.path
+        
+        if not hasattr(self, 'tdms_fn') or not hasattr(self, 'tdms'):
+            self.load_nidq()
+
+        for i, fn in enumerate(self.tdms_fn):
+            tprint(f"Saving {fn}")
+            self.tdms[i].to_pickle(fn.replace('.tdms', '.tdms.pd'))
 
 if __name__ == '__main__':
     bmi = BMI('C:\\SGL_DATA')
