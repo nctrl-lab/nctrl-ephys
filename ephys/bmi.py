@@ -21,13 +21,13 @@ class BMI:
         -----
         - The path to the .prb file is the main session folder.
         - It is assumed that there is only one .prb file in the session folder.
-        - There can be multiple mua.bin, fet.bin, nidq.bin files in the session folder.
-        - The number of mua.bin, fet.bin, nidq.bin files should be the same.
-        - So make sure to copy nidq.bin files under the subfolder such as main_path/nidq/**_g0/**_g0_t0.nidq.meta, main_path/nidq/**_g1/**_g1_t0.nidq.meta, etc.
+        - There can be multiple mua.bin, fet.bin, (nidq.bin or *.tdms) files in the session folder.
+        - The number of mua.bin, fet.bin files should be the same.
+        - Make sure to copy (nidq.bin or *.tdms) files under the subfolder such as main_path/nidq/**_g0/**_g0_t0.nidq.meta, main_path/nidq/**_g1/**_g1_t0.nidq.meta, etc.
 
             |-- mua.bin (1) --|    |-- mua.bin (2) --|    |-- mua.bin (3) --|
             |-- fet.bin (1) --|    |-- fet.bin (2) --|    |-- fet.bin (3) --|
-           |--- nidq.bin (1) --| |--- nidq.bin (2) ---|  |--- nidq.bin (3) ---|
+                                  |--- nidq.bin (2) ---|
         
         - These files are going to be ordered by the time of the file creation.
         """
@@ -472,7 +472,7 @@ class BMI:
             path = self.path
         
         if not hasattr(self, 'tdms_fn') or not hasattr(self, 'tdms'):
-            self.load_nidq()
+            self.load_tdms()
 
         for i, fn in enumerate(self.tdms_fn):
             tprint(f"Saving {fn}")

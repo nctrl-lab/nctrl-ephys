@@ -120,8 +120,7 @@ spike.plot() # this will generate an interactive raster and PSTH figure to brows
 1. Record BMI data
 2. Run `ephys bmi` to merge the BMI data into a binary file to run Kilosort.
 3. Run Kilosort (`ephys runks`)
-4. Run phy to curate the Kilosort results and save the result (`ephys saveks`)
-5. Extract event data from data logger (`ephys tdms`)
+4. Run phy to curate the Kilosort results and save the result (`ephys saveks --bmi`)
 6. Load the data using `ephys.spike.Spike` class.
 
 
