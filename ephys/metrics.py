@@ -18,12 +18,13 @@ from scipy.spatial.distance import cdist
 from scipy.stats import chi2
 from scipy.ndimage.filters import gaussian_filter1d
 
+import matplotlib.pyplot as plt
 
 DEFAULT_PARAMS = {
     'isi_threshold': 0.0015,
     'min_isi': 0.0,
     'num_channels_to_compare': 4,
-    'max_spikes_for_unit': 1e9,
+    'max_spikes_for_unit': 500,
     'max_spikes_for_nn': 10000,
     'n_neighbors': 4,
     'n_silhouette': 10000,
@@ -32,6 +33,68 @@ DEFAULT_PARAMS = {
     'do_parallel': True
 }
 
+DEFAULT_WAVEFORMS = np.array([
+    [
+        0.0, -0.6, -1.0, -1.4, -2.0, 
+        -2.7, -3.2, -3.9, -4.4, -5.0, 
+        -5.7, -6.3, -6.7, -6.8, -6.8, 
+        -7.8, -18.1, -62.7, -184.2, -425.1, 
+        -620.8, -604.7, -436.6, -220.8, -23.9, 
+        125.6, 224.3, 278.1, 298.6, 297.0, 
+        282.8, 262.0, 238.2, 213.9, 190.3, 
+        168.1, 147.7, 129.5, 112.8, 98.2, 
+        85.3, 74.0, 64.1, 55.6, 48.2, 
+        41.8, 36.2, 31.2, 27.0, 23.3, 
+        20.2, 17.5, 15.2, 13.1, 11.4, 
+        10.0, 8.8, 7.8, 7.1, 6.5, 
+        5.8,
+    ], 
+    [
+        0.0, 0.1, 0.7, 0.4, 0.2, 
+        0.3, 0.5, 0.4, 0.5, 1.3, 
+        3.0, 7.1, 13.7, 24.3, 38.0, 
+        57.6, 94.3, 164.0, 281.2, 445.7, 
+        562.3, 479.0, 230.7, -10.1, -157.2, 
+        -227.1, -251.3, -249.5, -234.6, -214.4, 
+        -192.1, -170.1, -149.5, -130.6, -113.0, 
+        -97.1, -82.7, -70.0, -58.2, -47.6, 
+        -38.3, -29.6, -21.5, -14.2, -7.4, 
+        -1.4, 3.9, 8.7, 12.6, 15.8, 
+        18.7, 20.7, 22.1, 23.2, 24.0, 
+        24.0, 24.0, 24.0, 23.4, 23.1, 
+        22.4,
+    ],
+    [
+        0.0, 2.0, 1.1, 1.0, 0.8, 
+        0.8, 0.7, 0.5, -0.1, -1.2, 
+        -2.3, -4.3, -7.5, -13.8, -27.6, 
+        -61.3, -135.7, -269.7, -469.5, -686.9, 
+        -820.9, -827.1, -752.9, -659.8, -571.5, 
+        -492.9, -424.7, -366.7, -317.3, -275.4, 
+        -239.5, -208.1, -180.2, -155.7, -133.3, 
+        -112.9, -94.3, -77.0, -61.6, -47.6, 
+        -34.8, -23.5, -13.1, -3.9, 4.8, 
+        12.0, 18.5, 24.3, 29.6, 34.1, 
+        37.9, 41.0, 43.5, 45.8, 47.7, 
+        48.7, 49.6, 50.3, 50.0, 50.1, 
+        50.4,
+    ],
+    [
+        0.0, -0.1, -0.4, -0.7, -0.8, 
+        -1.0, -1.0, -1.0, -0.7, -0.4, 
+        0.3, 1.5, 3.2, 6.5, 10.9, 
+        11.5, -11.3, -100.0, -297.4, -546.5, 
+        -689.3, -679.6, -585.0, -467.6, -354.5, 
+        -253.1, -164.6, -88.8, -24.7, 29.0, 
+        73.9, 111.2, 142.1, 167.4, 187.9, 
+        204.2, 216.6, 225.8, 231.9, 235.4, 
+        236.3, 235.2, 232.0, 227.1, 220.8, 
+        213.3, 204.9, 195.7, 186.1, 176.1, 
+        166.0, 155.8, 145.9, 136.2, 126.6, 
+        117.4, 108.7, 100.3, 92.2, 84.7, 
+        77.6,
+    ]
+])
 
 def calculate_metrics(spike_times,
                       spike_clusters,
@@ -136,11 +199,23 @@ def calculate_metrics(spike_times,
             params['do_parallel']
         )
 
+        metrics.update({
+            'isolation_distance': isolation_distance,
+            'l_ratio': l_ratio,
+            'd_prime': d_prime,
+            'nn_hit_rate': nn_hit_rate,
+            'nn_miss_rate': nn_miss_rate
+        })
+
         print("Calculating silhouette score")
         silhouette_score = calculate_silhouette_score(
             spike_clusters, spike_templates, total_units, pc_features,
             pc_feature_ind, params['n_silhouette']
         )
+
+        metrics.update({
+            'silhouette_score': silhouette_score
+        })
 
         print("Calculating drift metrics")
         max_drift, cumulative_drift = calculate_drift_metrics(
@@ -150,12 +225,6 @@ def calculate_metrics(spike_times,
         )
                                                        
         metrics.update({
-            'isolation_distance': isolation_distance,
-            'l_ratio': l_ratio,
-            'd_prime': d_prime,
-            'nn_hit_rate': nn_hit_rate,
-            'nn_miss_rate': nn_miss_rate,
-            'silhouette_score': silhouette_score,
             'max_drift': max_drift,
             'cumulative_drift': cumulative_drift
         })
@@ -732,8 +801,18 @@ def mahalanobis_metrics(all_pcs: np.ndarray, all_labels: np.ndarray, this_unit_i
         return np.nan, np.nan
 
     dof = pcs_for_this_unit.shape[1]  # Number of features
-    l_ratio = np.sum(1 - chi2.cdf(mahalanobis_other**2, dof)) / len(mahalanobis_self)
+    l_ratio = np.sum(1 - chi2.cdf(mahalanobis_other**2, dof)) / mahalanobis_self.shape[0]
     isolation_distance = mahalanobis_other[n-1]**2
+
+    # plt.figure(figsize=(10, 5))
+    # plt.hist(mahalanobis_other**2, bins=np.logspace(np.log10(1), np.log10(max(mahalanobis_other**2)), 50), alpha=0.5, label='Other units')
+    # plt.hist(mahalanobis_self**2, bins=np.logspace(np.log10(1), np.log10(max(mahalanobis_self**2)), 50), alpha=0.5, label='This unit')
+    # plt.xscale('log')
+    # plt.xlabel('Mahalanobis distance squared')
+    # plt.ylabel('Count')
+    # plt.title(f'Mahalanobis distances for unit {this_unit_id}, l_ratio: {l_ratio:.2f}, isolation distance: {isolation_distance:.2f}')
+    # plt.legend()
+    # plt.show()
 
     return isolation_distance, l_ratio
 

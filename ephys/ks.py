@@ -9,7 +9,7 @@ from sklearn.decomposition import PCA
 from .spikeglx import read_meta, read_analog, read_digital, read_bin, get_uV_per_bit, get_channel_idx
 from .utils import finder, confirm, savemat_safe, tprint, sync
 
-from .metrics import calculate_metrics, DEFAULT_PARAMS
+from .metrics import calculate_metrics, DEFAULT_PARAMS, DEFAULT_WAVEFORMS
 
 
 def run_ks4(path=None, settings=None):
@@ -252,6 +252,7 @@ class Kilosort():
         ]) # main template id for all clusters
 
         self.n_unit = len(self.cluster_good)
+        self.n_unit_all = len(self.cluster_id)
         
         # Spike times 
         self.time = np.array([self.spike_times[self.spike_clusters == c] / self.sample_rate for c in self.cluster_good], dtype=object)
@@ -268,10 +269,9 @@ class Kilosort():
         cluster_idx = template_idx[self.cluster_template_id] # main index for each cluster
         cluster_idx_all = template_idx[cluster_template_id_all] # main index for all clusters
         self.cluster_ind = nearest_channel(self.channel_position, cluster_idx_all)
-        self.waveform_idx = nearest_channel(self.channel_position, cluster_idx) # (n_unit, 14)
 
-        waveform = np.zeros((self.n_unit, temp_unwhitened.shape[1], 14))
-        for i, c in enumerate(self.cluster_good):
+        waveform = np.zeros((self.n_unit_all, temp_unwhitened.shape[1], 14))
+        for i, c in enumerate(self.cluster_id):
             cluster_mask = self.spike_clusters == c
             spike_templates = self.spike_templates[cluster_mask]
             template_ids, counts = np.unique(spike_templates, return_counts=True)
@@ -281,8 +281,12 @@ class Kilosort():
             
             mean_waveform = weighted_waveforms.sum(axis=0) / cluster_mask.sum()
             # We don't know the exact scaling factor that was used by Kilosort, but it was approximately 10.
-            waveform[i] = mean_waveform[:, self.waveform_idx[i]] / 10
-        self.waveform = waveform
+            waveform[i] = mean_waveform[:, self.cluster_ind[i]] / 10
+
+        self.waveform_all = waveform[:, :, 0] # just use the main channel
+
+        self.waveform = waveform[np.isin(self.cluster_id, self.cluster_good)]
+        self.waveform_idx = nearest_channel(self.channel_position, cluster_idx) # (n_unit, 14)
         self.waveform_position = self.channel_position[self.waveform_idx] # channel positions on the probe(n_unit, 14, 2)
         self.waveform_channel = self.channel_map[self.waveform_idx] # actual channel numbers (n_unit, 14)
         self.Vpp = np.ptp(self.waveform, axis=(1, 2))  # peak-to-peak amplitude
@@ -299,10 +303,6 @@ class Kilosort():
             The range of spike times to load, in samples. Default is (-20, 41).
         sample_range : tuple, optional
             The range of samples to load. Default is (0, 30000*300).
-        
-        Notes
-        -----
-        This will calculate the energy and the first PC for each waveform.
         """
         if not os.path.exists(self.data_file_path):
             print(f"Data file {self.data_file_path} does not exist")
@@ -399,7 +399,7 @@ class Kilosort():
         # get the main 14 channels for each cluster
         cluster_channels = self.channel_map[self.cluster_ind]
 
-        spkwav = np.zeros((n_spk, spk_width, 14), dtype=np.int16)
+        spkwav = np.zeros((n_spk, spk_width, 14))
         batch_starts = np.arange(n_batch) * n_sample_per_batch
         batch_ends = np.minimum(batch_starts + n_sample_per_batch, sample_range[1])
 
@@ -416,19 +416,22 @@ class Kilosort():
             indices = (starts[:, None] + time_indices[None, :])[:, :, None]
             indices = np.broadcast_to(indices, (len(spk_no), spk_width, 14))
             waveforms = data[indices, channels[:, None]]
-            spkwav[spk_no] = waveforms - waveforms[:, 0:1, :]
+            spkwav[spk_no] = waveforms - waveforms[:, :5, :].mean(axis=1, keepdims=True)
             del data
 
+        spkwav[np.isinf(spkwav) | np.isnan(spkwav)] = 0
         self.energy = np.full((self.spike_times.shape[0], 14), np.nan)
-        self.energy[in_range] = np.linalg.norm(spkwav, axis=1)
-        spkwav = spkwav / self.energy[in_range, np.newaxis, :]
+        self.energy[in_range] = np.linalg.norm(spkwav, axis=1) / np.sqrt(spk_width)
+        spkwav /= np.linalg.norm(spkwav, axis=1, keepdims=True)
+        spkwav[np.isinf(spkwav) | np.isnan(spkwav)] = 0
 
         channel_ind_idx = self.cluster_ind[idx]
         pc1 = np.full((spkwav.shape[0], spkwav.shape[2]), np.nan)
         for channel in np.unique(self.cluster_ind):
             in_channel = np.where(channel_ind_idx == channel)
-            waves = spkwav[in_channel[0], :, in_channel[1]]
-            pc1[in_channel[0], in_channel[1]] = PCA(n_components=1).fit_transform(waves).flatten()
+            waves = spkwav[in_channel[0], 5:, in_channel[1]]
+            waves_z = (waves - waves.mean(axis=0)) / waves.std(axis=0)
+            pc1[in_channel[0], in_channel[1]] = PCA(n_components=1).fit_transform(waves_z).flatten()
         
         self.pc1 = np.full((self.spike_times.shape[0], 14), np.nan)
         self.pc1[in_range] = pc1
@@ -441,6 +444,7 @@ class Kilosort():
     def load_metrics(self):
         if not hasattr(self, 'energy') or not hasattr(self, 'pc1'):
             self.load_energy_pc1()
+        tprint("Calculating metrics")
         self.metrics = calculate_metrics(
             self.spike_times / self.sample_rate,
             self.spike_clusters,
@@ -455,6 +459,45 @@ class Kilosort():
             self.cluster_id_inv,
             DEFAULT_PARAMS
         )
+    
+    def save_metrics(self):
+        if not hasattr(self, 'metrics'):
+            self.load_metrics()
+        
+        tprint("Saving metrics")
+        # Load the cluster_KSLabel.tsv file
+        cluster_info_fn = os.path.join(self.path, 'cluster_info.tsv')
+        cluster_info_original_fn = os.path.join(self.path, 'cluster_info_original.tsv')
+
+        if os.path.exists(cluster_info_fn):
+            df = pd.read_csv(cluster_info_fn, sep='\t')
+            if not os.path.exists(cluster_info_original_fn):
+                import shutil
+                shutil.copy(cluster_info_fn, cluster_info_original_fn)
+        else:
+            tprint("No cluster_info.tsv found.")
+            return
+
+        # Decide which clusters are good, mua, or noise
+        ids = self.metrics['cluster_id']
+        good_l_ratio = (self.metrics['l_ratio'] < 1.0).astype(int)
+        good_isolation_distance = (self.metrics['isolation_distance'] > 10).astype(int)
+
+        # Calculate correlation coefficients with DEFAULT_WAVEFORM
+        corr_coeffs = np.corrcoef(self.waveform_all.reshape(self.waveform_all.shape[0], -1), 
+                                  DEFAULT_WAVEFORMS.reshape(DEFAULT_WAVEFORMS.shape[0], -1))
+        corr_coeffs = corr_coeffs[:self.waveform_all.shape[0], self.waveform_all.shape[0]:]
+        good_waveform = (np.max(corr_coeffs, axis=1) > 0.9).astype(int)
+
+        good_cluster = good_l_ratio + good_isolation_distance + good_waveform
+    
+        quality_labels = {3: 'great', 2: 'good', 1: 'soso', 0: 'noise'}
+        ks_label = pd.Categorical.from_codes(good_cluster, categories=list(quality_labels.values()))
+        df.loc[df['cluster_id'].isin(ids), 'KSLabel'] = ks_label
+
+        print(f"{(good_cluster == 3).sum()} great, {(good_cluster == 2).sum()} good, {(good_cluster == 1).sum()} soso, {(good_cluster == 0).sum()} noise")
+        
+        df.to_csv(cluster_info_fn, sep='\t', index=False)
 
     def load_sync(self):
         if not os.path.exists(self.data_file_path):
@@ -587,9 +630,12 @@ class Kilosort():
 
 if __name__ == "__main__":
     ks = Kilosort("C:\\SGL_DATA\\Y02_20240731_M1_g0\\Y02_20240731_M1_g0_imec0\\kilosort4")
-    breakpoint()
-    ks.load_waveforms()
-    ks.load_metrics()
+    # ks.load_waveforms()
+    # ks.save_metrics()
+    # breakpoint()
+    # ks.load_energy_pc1()
+    # breakpoint()
+    # ks.load_metrics()
     # ks.save()
     # ks.plot(idx=0)
 
