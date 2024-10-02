@@ -34,7 +34,6 @@ def saveks(path, metric, bmi):
         ks.load_sync()
         ks.load_nidq()
     if metric:
-        ks.load_waveforms_full()
         ks.load_metrics()
     ks.save()
 
