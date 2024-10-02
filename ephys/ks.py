@@ -35,7 +35,8 @@ def run_ks4(path=None, settings=None):
             settings['data_dir'] = os.path.dirname(fn)
             
             run_kilosort(settings=settings, probe=probe)
-
+    
+    return fns
 
 def get_probe(meta: dict) -> dict:
     """
@@ -98,8 +99,12 @@ class Kilosort():
 
         if not os.path.exists(path):
             raise ValueError(f"Path {path} does not exist")
+        
+        self.path = os.path.dirname(path) if os.path.isfile(path) else path
 
-        self.path = path
+        if not os.path.isdir(self.path):
+            raise ValueError(f"Path {self.path} is not a valid directory")
+
         self.session = path.split(os.path.sep)[-2]
         self.sync = None
         self.nidq = None
@@ -233,7 +238,7 @@ class Kilosort():
         else:
             tprint("No cluster_info.tsv found. Loading all clusters.")
             self.cluster_id = np.unique(self.spike_clusters)
-            self.cluster_group = np.full_like(self.cluster_id, np.nan)
+            self.cluster_group = np.full_like(self.cluster_id, np.nan, dtype=object)
             load_all = True
         self.cluster_id_inv = {c: i for i, c in enumerate(self.cluster_id)}
         
@@ -289,7 +294,8 @@ class Kilosort():
         self.waveform_idx = nearest_channel(self.channel_position, cluster_idx) # (n_unit, 14)
         self.waveform_position = self.channel_position[self.waveform_idx] # channel positions on the probe(n_unit, 14, 2)
         self.waveform_channel = self.channel_map[self.waveform_idx] # actual channel numbers (n_unit, 14)
-        self.Vpp = np.ptp(self.waveform, axis=(1, 2))  # peak-to-peak amplitude
+        with np.errstate(invalid='ignore'):
+            self.Vpp = np.ptp(self.waveform, axis=(1, 2))  # peak-to-peak amplitude
 
         tprint("Finished waveform (template)")
 
@@ -465,39 +471,32 @@ class Kilosort():
             self.load_metrics()
         
         tprint("Saving metrics")
-        # Load the cluster_KSLabel.tsv file
-        cluster_info_fn = os.path.join(self.path, 'cluster_info.tsv')
-        cluster_info_original_fn = os.path.join(self.path, 'cluster_info_original.tsv')
 
-        if os.path.exists(cluster_info_fn):
-            df = pd.read_csv(cluster_info_fn, sep='\t')
-            if not os.path.exists(cluster_info_original_fn):
-                import shutil
-                shutil.copy(cluster_info_fn, cluster_info_original_fn)
-        else:
-            tprint("No cluster_info.tsv found.")
-            return
-
-        # Decide which clusters are good, mua, or noise
         ids = self.metrics['cluster_id']
-        good_l_ratio = (self.metrics['l_ratio'] < 1.0).astype(int)
-        good_isolation_distance = (self.metrics['isolation_distance'] > 10).astype(int)
+        l_ratio = self.metrics['l_ratio']
+        isolation_distance = self.metrics['isolation_distance']
 
-        # Calculate correlation coefficients with DEFAULT_WAVEFORM
-        corr_coeffs = np.corrcoef(self.waveform_all.reshape(self.waveform_all.shape[0], -1), 
-                                  DEFAULT_WAVEFORMS.reshape(DEFAULT_WAVEFORMS.shape[0], -1))
-        corr_coeffs = corr_coeffs[:self.waveform_all.shape[0], self.waveform_all.shape[0]:]
-        good_waveform = (np.max(corr_coeffs, axis=1) > 0.9).astype(int)
+        waveform_reshaped = self.waveform_all.reshape(self.waveform_all.shape[0], -1)
+        default_waveforms_reshaped = DEFAULT_WAVEFORMS.reshape(DEFAULT_WAVEFORMS.shape[0], -1)
+        corr_coeffs = np.corrcoef(waveform_reshaped, default_waveforms_reshaped)
+        waveform_corr = corr_coeffs[:self.waveform_all.shape[0], self.waveform_all.shape[0]:]
 
-        good_cluster = good_l_ratio + good_isolation_distance + good_waveform
-    
-        quality_labels = {3: 'great', 2: 'good', 1: 'soso', 0: 'noise'}
-        ks_label = pd.Categorical.from_codes(good_cluster, categories=list(quality_labels.values()))
-        df.loc[df['cluster_id'].isin(ids), 'KSLabel'] = ks_label
+        score = 1*(l_ratio < 1.0) + 1*(l_ratio < 0.1) + 1*(l_ratio < 0.05) + 1*(isolation_distance > 10) + 1*((waveform_corr[:, 3] > 0.9) | (waveform_corr[:, 0] > 0.9))
 
-        print(f"{(good_cluster == 3).sum()} great, {(good_cluster == 2).sum()} good, {(good_cluster == 1).sum()} soso, {(good_cluster == 0).sum()} noise")
-        
-        df.to_csv(cluster_info_fn, sep='\t', index=False)
+        df = pd.DataFrame({
+            'cluster_id': ids,
+            'l_ratio': l_ratio,
+            'iso_dist': isolation_distance,
+            'wav_pyr': waveform_corr[:, 3],
+            # 'wav_pyr2': waveform_corr[:, 2],
+            'wav_int': waveform_corr[:, 0],
+            'wav_inv': waveform_corr[:, 1],
+            'score': score,
+        })
+
+        cluster_metrics_fn = os.path.join(self.path, 'cluster_metrics.tsv')
+        df.to_csv(cluster_metrics_fn, sep='\t', index=False)
+
 
     def load_sync(self):
         if not os.path.exists(self.data_file_path):
@@ -631,7 +630,7 @@ class Kilosort():
 if __name__ == "__main__":
     ks = Kilosort("C:\\SGL_DATA\\Y02_20240731_M1_g0\\Y02_20240731_M1_g0_imec0\\kilosort4")
     # ks.load_waveforms()
-    # ks.save_metrics()
+    ks.save_metrics()
     # breakpoint()
     # ks.load_energy_pc1()
     # breakpoint()

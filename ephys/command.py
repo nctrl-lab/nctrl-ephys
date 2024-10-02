@@ -13,9 +13,18 @@ def catgt(path):
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
-def runks(path):
-    from .ks import run_ks4
-    run_ks4(path)
+@click.option('--metric', is_flag=True)
+def runks(path, metric):
+    from .ks import run_ks4, Kilosort
+    fns = run_ks4(path)
+
+    if metric:
+        for fn in fns:
+            ks_dir = os.path.join(os.path.dirname(fn), 'kilosort4')
+            ks_fn = os.path.join(ks_dir, 'params.py')
+            if os.path.exists(ks_fn):
+                ks = Kilosort(ks_dir)
+                ks.save_metrics()
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
@@ -34,7 +43,7 @@ def saveks(path, metric, bmi):
         ks.load_sync()
         ks.load_nidq()
     if metric:
-        ks.load_metrics()
+        ks.save_metrics()
     ks.save()
 
 @main.command()
