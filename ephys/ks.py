@@ -459,7 +459,7 @@ class Kilosort():
         MAX_MEMORY = int(4e9)
 
         if len(self.spike_times) > max_spike:
-            sample_range[1] = self.spike_times[max_spike]
+            sample_range = (sample_range[0], self.spike_times[max_spike])
 
         n_sample_file = self.meta['fileSizeBytes'] // (self.meta['nSavedChans'] * np.dtype(np.int16).itemsize)
         sample_range = (max(0, sample_range[0]), min(sample_range[1], n_sample_file))
