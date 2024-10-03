@@ -738,7 +738,7 @@ class Kilosort():
             'Vpp': self.Vpp,
             'peak': self.peak,
             'n_unit': self.n_unit,
-            'n_unit_good': self.n_unit_good,
+            'n_unit_all': self.n_unit_all,
             'cluster_id': self.cluster_id,
             'cluster_good': self.cluster_good,
             'cluster_template_id': self.cluster_template_id,
