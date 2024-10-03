@@ -92,7 +92,77 @@ def nearest_channel(channel_position, channel_index=None, count=14):
 
 
 class Kilosort():
+    """
+    A class for loading and processing Kilosort output data.
+
+    This class provides methods to load Kilosort output files, process spike data,
+    calculate various metrics, and save the processed data.
+
+    Attributes:
+        path (str): Path to the Kilosort output directory.
+        session (str): Name of the recording session.
+        sync (dict): Synchronization data.
+        nidq (dict): NIDQ data.
+        meta (dict): Metadata from the recording.
+        n_channel (int): Number of channels.
+        uV_per_bit (float): Microvolts per bit conversion factor.
+        sample_rate (float): Sampling rate of the recording.
+        file_create_time (str): Time when the file was created.
+        data_file_path (str): Path to the raw data file.
+        data_file_path_orig (str): Original path to the raw data file.
+        spike_times (ndarray): Array of spike times.
+        spike_clusters (ndarray): Array of cluster IDs for each spike.
+        spike_templates (ndarray): Array of template IDs for each spike.
+        spike_positions (ndarray): Array of spike positions.
+        pc_features (ndarray): Array of PC features for each spike.
+        pc_feature_ind (ndarray): Array of PC feature indices.
+        templates (ndarray): Array of spike templates.
+        amplitudes (ndarray): Array of spike amplitudes.
+        winv (ndarray): Inverse of the whitening matrix.
+        channel_map (ndarray): Map of channel indices to physical channels.
+        channel_position (ndarray): Positions of channels on the probe.
+        cluster_id (ndarray): Array of cluster IDs.
+        cluster_group (ndarray): Array of cluster group labels.
+        cluster_good (ndarray): Array of 'good' cluster IDs.
+        cluster_template_id (ndarray): Array of template IDs for each cluster.
+        n_unit (int): Number of units (clusters).
+        time (ndarray): Array of spike times in seconds.
+        frame (ndarray): Array of spike times in samples.
+        firing_rate (list): List of firing rates for each unit.
+        position (ndarray): Array of median spike positions for each unit.
+        waveform (ndarray): Array of mean template waveforms for each unit.
+        waveform_idx (ndarray): Array of channel indices for waveforms.
+        waveform_channel (ndarray): Array of channel numbers for waveforms.
+        waveform_position (ndarray): Array of channel positions for waveforms.
+        Vpp (ndarray): Array of peak-to-peak amplitudes for each unit.
+        metrics (dict): Dictionary of calculated metrics for each unit.
+
+    Methods:
+        __init__(self, path=None): Initialize the Kilosort object.
+        __repr__(self): Return a string representation of the object.
+        load_meta(self): Load metadata from the recording.
+        _load_kilosort(self): Load Kilosort output files.
+        load_kilosort(self, load_all=False): Process Kilosort data.
+        load_waveforms(self, spk_range=(-20, 41), sample_range=(0, 30000*300)): Load waveforms from raw data.
+        load_energy_pc1(self, spk_range=(-20, 41), sample_range=(0, 30000*300), max_spike=1e6): Calculate energy and PC1 for spikes.
+        load_metrics(self): Calculate various metrics for each unit.
+        save_metrics(self): Save calculated metrics to a file.
+        load_sync(self): Load synchronization data.
+        load_nidq(self, path=None): Load NIDQ data.
+        save(self, path=None): Save processed data to a file.
+        plot(self, idx=0, xscale=1, yscale=1): Plot waveforms for a given unit.
+    """
+
     def __init__(self, path=None):
+        """
+        Initialize the Kilosort object.
+
+        Args:
+            path (str, optional): Path to the Kilosort output directory. If None, attempts to find it automatically.
+
+        Raises:
+            ValueError: If the specified path does not exist or is not a valid directory.
+        """
         if path is None:
             fn = finder(None, 'params.py$')
             path = os.path.dirname(fn)
@@ -113,6 +183,12 @@ class Kilosort():
         self.load_kilosort()
 
     def __repr__(self):
+        """
+        Return a string representation of the Kilosort object.
+
+        Returns:
+            str: A string containing information about the object's attributes.
+        """
         result = []
         for key, value in self.__dict__.items():
             if key.startswith('__'):
@@ -139,6 +215,15 @@ class Kilosort():
         return "\n".join(result)
 
     def load_meta(self):
+        """
+        Load metadata from the recording.
+
+        This method reads the metadata from the ops.npy file and the associated binary data file.
+        It sets various attributes of the object based on the metadata.
+
+        Raises:
+            ValueError: If the data file name does not match the original name and the user chooses not to continue.
+        """
         ops = np.load(os.path.join(self.path, 'ops.npy'), allow_pickle=True).item()
         self.data_file_path_orig = str(ops.get('filename'))
         parent_folder = os.path.dirname(self.path)
@@ -156,6 +241,12 @@ class Kilosort():
         self.file_create_time = self.meta.get('fileCreateTime')
     
     def _load_kilosort(self):
+        """
+        Load Kilosort output files.
+
+        This method loads various Kilosort output files, including spike times, clusters, templates, and more.
+        It sets several attributes of the object based on these files.
+        """
         tprint(f"Loading Kilosort data from {self.path}")
 
         self.spike_times = np.load(os.path.join(self.path, "spike_times.npy"))
@@ -180,50 +271,17 @@ class Kilosort():
 
     def load_kilosort(self, load_all=False):
         """
-        Load Kilosort data from the specified path.
+        Process Kilosort data.
 
-        Parameters:
-        -----------
-        load_all : bool, optional
-            If True, load all clusters. If False, load only 'good' clusters. Default is False.
+        This method processes the loaded Kilosort data, calculating various attributes such as
+        cluster information, spike times, waveforms, and more.
 
-        Attributes:
-        -----------
-        cluster_id : ndarray
-            Array of cluster IDs.
-        cluster_group : ndarray
-            Group labels for all clusters (good, mua, noise, or nan).
-        cluster_good : ndarray
-            Array of 'good' cluster IDs.
-        cluster_template_id : ndarray
-            Array of template IDs for each cluster.
-        n_unit : int
-            Number of clusters.
-        n_unit_good : int
-            Number of 'good' clusters.
-        time : ndarray of object
-            Spike times in seconds for 'good' clusters.
-        frame : ndarray of object
-            Spike times in samples for 'good' clusters.
-        firing_rate : list
-            Firing rates for 'good' clusters.
-        position : ndarray
-            Median spike positions on the probe for 'good' clusters.
-        waveform : ndarray
-            Mean template waveforms across the nearest 14 channels (n_unit, 61, 14).
-        waveform_idx : ndarray
-            Channel indices for the 14 nearest channels (not actual channel numbers).
-        waveform_channel : ndarray
-            Actual channel numbers corresponding to the waveform sites (n_unit, 14).
-        waveform_position: ndarray
-            Channel positions on the probe for the 14 nearest channels (n_unit, 14, 2).
-        Vpp : ndarray
-            Peak-to-peak amplitude in arbitrary units.
+        Args:
+            load_all (bool, optional): If True, load all clusters. If False, load only 'good' clusters. Default is False.
 
-        channel_map : ndarray
-            Mapping of channel indices to physical channels.
-        channel_position : ndarray
-            Positions of all channels on the probe.
+        Attributes modified:
+            cluster_id, cluster_group, cluster_good, cluster_template_id, n_unit, time, frame, firing_rate,
+            position, waveform, waveform_idx, waveform_position, waveform_channel, Vpp, peak
         """
         self._load_kilosort()
         
@@ -296,19 +354,23 @@ class Kilosort():
         self.waveform_channel = self.channel_map[self.waveform_idx] # actual channel numbers (n_unit, 14)
         with np.errstate(invalid='ignore'):
             self.Vpp = np.ptp(self.waveform, axis=(1, 2))  # peak-to-peak amplitude
+            self.peak = -self.waveform.min(axis=(1, 2))
 
         tprint("Finished waveform (template)")
 
     def load_waveforms(self, spk_range=(-20, 41), sample_range=(0, 30000*300)):
         """
-        Load waveforms and related metrics from the raw data file
-        
-        Parameters
-        ----------
-        spk_range : tuple, optional
-            The range of spike times to load, in samples. Default is (-20, 41).
-        sample_range : tuple, optional
-            The range of samples to load. Default is (0, 30000*300).
+        Load waveforms from the raw data file.
+
+        This method extracts waveforms for each spike from the raw data file and calculates
+        various waveform-related metrics.
+
+        Args:
+            spk_range (tuple, optional): The range of spike times to load, in samples. Default is (-20, 41).
+            sample_range (tuple, optional): The range of samples to load from the file. Default is (0, 30000*300).
+
+        Attributes modified:
+            waveform_raw, Vpp_raw, peak_raw
         """
         if not os.path.exists(self.data_file_path):
             print(f"Data file {self.data_file_path} does not exist")
@@ -356,25 +418,34 @@ class Kilosort():
         self.waveform_raw = np.array([np.nanmedian(spkwav[idx == i_unit], axis=0) 
                                       for i_unit in np.unique(idx)])
         self.Vpp_raw = np.ptp(self.waveform_raw, axis=(1, 2))
-
+        self.peak_raw = -self.waveform_raw.min(axis=(1, 2))
+        
         tprint("Finished waveform (raw)")
 
     def load_energy_pc1(self, spk_range=(-20, 41), sample_range=(0, 30000*300), max_spike=1e6):
         """
-        Load waveforms and related metrics from the raw data file
-        
-        Parameters
-        ----------
-        spk_range : tuple, optional
-            The range of spike times to load, in samples. Default is (-20, 41).
-        sample_range : tuple, optional
-            The range of samples to load. Default is (0, 30000*300).
-        max_spike : int, optional
-            The maximum number of spikes to load. Default is 1e6.
-        
-        Notes
-        -----
-        This will calculate the energy and the first PC for each waveform.
+        Calculate energy and first principal component (PC1) for each spike.
+
+        This method processes the raw data file in batches to manage memory usage efficiently.
+        It calculates the energy of each spike waveform and performs PCA to extract the first
+        principal component, which are useful features for spike sorting and cluster quality assessment.
+
+        Args:
+            spk_range (tuple of int, optional): The range of samples around each spike to extract, relative to the spike time.
+                Default is (-20, 41), which extracts 61 samples centered on each spike.
+            sample_range (tuple of int, optional): The range of samples to process from the raw data file.
+                Default is (0, 30000*300), which processes the first 300 seconds of data.
+            max_spike (int, optional): The maximum number of spikes to process. If the actual number of spikes exceeds
+                this value, the sample range will be adjusted to include only the first max_spike spikes.
+                Default is 1e6 (1 million spikes).
+
+        Attributes modified:
+            energy, pc1, waveform_raw_all, peak_raw_all
+
+        Notes:
+            - The method saves the calculated energy and PC1 values as .npy files in the same directory as the raw data.
+            - The energy is calculated as the L2 norm of each waveform divided by the square root of the number of samples.
+            - The PC1 is calculated using PCA on the waveforms normalized by the L2 norm.
         """
         if not os.path.exists(self.data_file_path):
             print(f"Data file {self.data_file_path} does not exist")
@@ -411,7 +482,7 @@ class Kilosort():
 
         for i_batch, (batch_start, batch_end) in enumerate(zip(batch_starts, batch_ends)):
             tprint(f"Loading waveforms from {self.data_file_path} (batch {i_batch+1}/{n_batch})")
-            data = read_bin(self.data_file_path, sample_range=(batch_start+spk_range[0], batch_end+spk_range[1]))
+            data = read_analog(self.data_file_path, sample_range=(batch_start+spk_range[0], batch_end+spk_range[1]))
 
             mask = (spks >= batch_start) & (spks < batch_end)
             spk, spk_idx, spk_no = spks[mask], idx[mask], np.where(mask)[0]
@@ -442,12 +513,27 @@ class Kilosort():
         self.pc1 = np.full((self.spike_times.shape[0], 14), np.nan)
         self.pc1[in_range] = pc1
 
+        # Waveform features
+        unique_idx = np.unique(idx)
+        self.waveform_raw_all = np.array([spkwav[idx == i, :, 0].mean(axis=0) for i in unique_idx])
+        self.peak_raw_all = -self.waveform_raw_all.min(axis=1)
+
         tprint("Saving energy")
         np.save(os.path.join(self.path, 'energy.npy'), self.energy)
         tprint("Saving PC1")
         np.save(os.path.join(self.path, 'pc1.npy'), self.pc1)
 
     def load_metrics(self):
+        """
+        Calculate various metrics for each unit.
+
+        This method calculates metrics such as L-ratio, isolation distance, and presence ratio
+        for each unit. It uses the spike times, clusters, templates, amplitudes, and other features
+        to compute these metrics.
+
+        Attributes modified:
+            metrics (dict): A dictionary containing calculated metrics for each unit.
+        """
         if not hasattr(self, 'energy') or not hasattr(self, 'pc1'):
             self.load_energy_pc1()
         tprint("Calculating metrics")
@@ -467,38 +553,79 @@ class Kilosort():
         )
     
     def save_metrics(self):
+        """
+        Save cluster metrics to a TSV file.
+
+        This method calculates and saves various metrics for each cluster, including:
+        - A quality score based on multiple criteria
+        - L-ratio
+        - Isolation distance
+        - Waveform correlations with default pyramidal and interneuron waveforms
+
+        The metrics are saved to a file named 'cluster_metrics.tsv' in the Kilosort output directory.
+
+        Note: The scoring system used to calculate the quality score can be easily modified
+        by adjusting the criteria and thresholds in the score calculation section of this method.
+        """
         if not hasattr(self, 'metrics'):
             self.load_metrics()
-        
-        tprint("Saving metrics")
 
+        # Extract relevant metrics
         ids = self.metrics['cluster_id']
+        fr = self.metrics['firing_rate']
+        presence_ratio = self.metrics['presence_ratio']
         l_ratio = self.metrics['l_ratio']
         isolation_distance = self.metrics['isolation_distance']
+        isi_viol_corrected = self.metrics['isi_viol_corrected']
+        peak = self.peak_raw_all
 
+        # Calculate waveform correlations
         waveform_reshaped = self.waveform_all.reshape(self.waveform_all.shape[0], -1)
         default_waveforms_reshaped = DEFAULT_WAVEFORMS.reshape(DEFAULT_WAVEFORMS.shape[0], -1)
         corr_coeffs = np.corrcoef(waveform_reshaped, default_waveforms_reshaped)
         waveform_corr = corr_coeffs[:self.waveform_all.shape[0], self.waveform_all.shape[0]:]
 
-        score = 1*(l_ratio < 1.0) + 1*(l_ratio < 0.1) + 1*(l_ratio < 0.05) + 1*(isolation_distance > 10) + 1*((waveform_corr[:, 3] > 0.9) | (waveform_corr[:, 0] > 0.9))
+        # Calculate quality score based on multiple criteria
+        # Note: This scoring system can be easily modified by adjusting the criteria and thresholds below
+        score = np.zeros_like(l_ratio, dtype=int)
+        score += (l_ratio < 1.0) + (l_ratio < 0.1) + (l_ratio < 0.05)
+        score += (isolation_distance > 10)
+        score += (fr > 0.5)
+        score += (presence_ratio > 0.5)
+        score += (isi_viol_corrected < 0.5)
+        score += (waveform_corr[:, 0] > 0.9) | (waveform_corr[:, 1] > 0.9) | (waveform_corr[:, 2] > 0.9)
+        score += (peak > 40)
 
+        # Create DataFrame with metrics
         df = pd.DataFrame({
             'cluster_id': ids,
+            'score': score,
             'l_ratio': l_ratio,
             'iso_dist': isolation_distance,
-            'wav_pyr': waveform_corr[:, 3],
-            # 'wav_pyr2': waveform_corr[:, 2],
-            'wav_int': waveform_corr[:, 0],
-            'wav_inv': waveform_corr[:, 1],
-            'score': score,
+            'wav_pyr': waveform_corr[:, 0],
+            'wav_int': waveform_corr[:, 2],
+            'peak_uV': peak
         })
 
+        # Save metrics to TSV file
+        tprint("Saving metrics")
         cluster_metrics_fn = os.path.join(self.path, 'cluster_metrics.tsv')
         df.to_csv(cluster_metrics_fn, sep='\t', index=False)
 
-
     def load_sync(self):
+        """
+        Load synchronization data from the IMEC data file.
+
+        This method reads digital data from the IMEC file, specifically looking for
+        synchronization pulses on channel 6. It extracts time, frame, and type information
+        for these pulses and stores them in the 'sync' attribute.
+
+        If the data file doesn't exist or is not of the IMEC type, appropriate error
+        messages are printed and the method returns without loading any data.
+
+        Returns:
+            None
+        """
         if not os.path.exists(self.data_file_path):
             print(f"Data file {self.data_file_path} does not exist")
             return
@@ -521,6 +648,24 @@ class Kilosort():
             self.sync.update(sync)
 
     def load_nidq(self, path=None):
+        """
+        Load National Instruments Data Acquisition (NIDQ) data.
+
+        This method reads digital data from the NIDQ file, processes it, and stores
+        the results in the 'nidq' and 'sync' attributes.
+
+        Args:
+            path (str, optional): Path to the NIDQ file. If not provided, the method
+                                  attempts to find the file automatically.
+
+        Returns:
+            None
+
+        Side effects:
+            - Updates self.nidq with NIDQ data
+            - Updates self.sync with synchronization data from NIDQ
+            - Calculates and stores IMEC time for NIDQ data
+        """
         nidq_fn = path if path and os.path.isfile(path) else finder(os.path.dirname(os.path.dirname(self.data_file_path)), 'nidq.bin$') or finder(pattern='nidq.bin$')
         
         if not nidq_fn:
@@ -544,6 +689,15 @@ class Kilosort():
         self.nidq['time_imec'] = sync(self.sync['time_nidq'], self.sync['time_imec'])(self.nidq['time'])
 
     def save(self, path=None):
+        """
+        Save Kilosort data to a MATLAB file.
+
+        Args:
+            path (str, optional): Directory to save the file. Uses default if None.
+
+        Saves spike data, sync data, and NIDQ data (if available) to '{self.session}_data.mat'.
+        Includes all unit data, raw waveforms, and metrics if present.
+        """
         path = path or self.path
 
         spike = {
@@ -556,6 +710,7 @@ class Kilosort():
             'waveform_channel': self.waveform_channel,
             'waveform_position': self.waveform_position,
             'Vpp': self.Vpp,
+            'peak': self.peak,
             'n_unit': self.n_unit,
             'n_unit_good': self.n_unit_good,
             'cluster_id': self.cluster_id,
@@ -575,12 +730,14 @@ class Kilosort():
         if hasattr(self, 'waveform_raw'):
             spike.update({
                 'waveform_raw': self.waveform_raw,
-                'Vpp_raw': self.Vpp_raw
+                'Vpp_raw': self.Vpp_raw,
+                'peak_raw': self.peak_raw,
             })
         
         if hasattr(self, 'metrics'):
             spike.update({
-                'metrics': self.metrics
+                'metrics': self.metrics,
+                'peak_raw_all': self.peak_raw_all,
             })
         
         data = {'spike': spike}
@@ -628,6 +785,12 @@ class Kilosort():
         plt.show()
 
 if __name__ == "__main__":
+    """
+    This section is for testing the Kilosort class.
+
+    To run this code block, you can use the following command:
+    > python -m ephys.ks
+    """
     ks = Kilosort("C:\\SGL_DATA\\Y02_20240731_M1_g0\\Y02_20240731_M1_g0_imec0\\kilosort4")
     # ks.load_waveforms()
     ks.save_metrics()
