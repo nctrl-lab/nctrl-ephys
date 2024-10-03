@@ -295,9 +295,12 @@ class BMI:
         return snschanmap
 
     def get_snsgeommap(self):
-        snsgeommap = f"(FPGABMI,{np.unique(self.shank_saved).size},200,70)"
+        # Note: x position will be set to 0 for all channels
+        # To recontruct the x position, add the shank index * shank_spacing
+        # We set the shank spacing to 1000 um.
+        snsgeommap = f"(FPGABMI,{np.unique(self.shank_saved).size},1000,70)"
         for i, (shank, position) in enumerate(zip(self.shank_saved, self.channel_position_saved)):
-            snsgeommap += f"({shank}:{int(position[0])}:{int(position[1])}:{int(not np.isnan(position[0]))})"
+            snsgeommap += f"({shank}:0:{int(position[1])}:{int(not np.isnan(position[0]))})"
         return snsgeommap
 
     def save_catgt(self):

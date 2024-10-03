@@ -61,7 +61,6 @@ def get_probe(meta: dict) -> dict:
     connected = electrodes['used'].values.astype(np.bool_)
     
     channel_map = np.array([i['channel'] for i in meta['snsChanMap']['channel_map']], dtype=np.int32)
-    
     channel_idx = get_channel_idx(meta)
     
     return {
