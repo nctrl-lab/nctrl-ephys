@@ -523,7 +523,7 @@ def get_channel_idx(meta, analog=True):
     
     return channel_idx
 
-def plot_chanmap(filename):
+def plot_chanmap(filename, save_file=True):
     """
     Plot the channel locations based on the parsed snsGeomMap data.
     
@@ -538,6 +538,13 @@ def plot_chanmap(filename):
         raise ValueError("snsGeomMap not found in meta data")
     
     geom_data = meta['snsGeomMap']
+    if save_file:
+        import json
+        probe = get_probe(meta)
+        probe_fn = os.path.join(os.path.dirname(filename), geom_data['header']['part_number'] + '.json')
+        with open(probe_fn, 'w') as f:
+            json.dump(probe, f)
+
     fig, ax = plt.subplots(figsize=(4, 8))
     
     x = [e['x'] + e['shank'] * geom_data['header']['shank_spacing'] for e in geom_data['electrodes']]
@@ -557,6 +564,35 @@ def plot_chanmap(filename):
     
     plt.tight_layout()
     plt.show()
+
+def get_probe(meta: dict) -> dict:
+    """
+    Create a dictionary to track probe information for Kilosort4.
+
+    Parameters
+    ----------
+    meta : dict
+        Dictionary containing metadata information.
+
+    Returns
+    -------
+    dict
+        Dictionary with the following keys, all corresponding to NumPy ndarrays:
+        'chanMap': the channel indices that are included in the data.
+        'xc':      the x-coordinates (in micrometers) of the probe contact centers.
+        'yc':      the y-coordinates (in micrometers) of the probe contact centers.
+        'kcoords': shank or channel group of each contact (not used yet, set all to 0).
+        'n_chan':  the number of channels.
+    """
+    probe_info = {
+        'chanMap': np.array([i['channel'] for i in meta['snsChanMap']['channel_map']], dtype=np.int32)[get_channel_idx(meta)],
+        'xc': np.array([i['x'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
+        'yc': np.array([i['z'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
+        'kcoords': np.array([i['shank'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
+        'n_chan': np.array(meta['nSavedChans'], dtype=np.float32)
+    }
+    return probe_info
+
 
 
 if __name__ == '__main__':

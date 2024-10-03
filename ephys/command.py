@@ -13,6 +13,15 @@ def catgt(path):
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
+@click.option('--save_file', is_flag=True, default=True)
+def probe(path, save_file):
+    from .utils import finder
+    from .spikeglx import plot_chanmap
+    fn = finder(path, r'ap.meta$')
+    plot_chanmap(fn, save_file=save_file)
+
+@main.command()
+@click.option('--path', type=click.Path(exists=True), default=None)
 @click.option('--metric', is_flag=True)
 def runks(path, metric):
     from .ks import run_ks4, Kilosort
