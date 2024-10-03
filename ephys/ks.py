@@ -427,7 +427,7 @@ class Kilosort():
         
         tprint("Finished waveform (raw)")
 
-    def load_energy_pc1(self, spk_range=(-20, 41), sample_range=(0, 30000*300), max_spike=1e6):
+    def load_energy_pc1(self, spk_range=(-20, 41), sample_range=(0, 30000*300), max_spike=100000):
         """
         Calculate energy and first principal component (PC1) for each spike.
 
