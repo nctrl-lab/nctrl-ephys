@@ -437,7 +437,7 @@ class Kilosort():
         
         tprint("Finished waveform (raw)")
 
-    def load_energy_pc1(self, spk_range=(-20, 41), sample_range=(0, 30000*300), max_spike=200000):
+    def load_energy_pc1(self, spk_range=(-20, 41), max_spike=1000000):
         """
         Calculate energy and first principal component (PC1) for each spike.
 
@@ -448,8 +448,6 @@ class Kilosort():
         Args:
             spk_range (tuple of int, optional): The range of samples around each spike to extract, relative to the spike time.
                 Default is (-20, 41), which extracts 61 samples centered on each spike.
-            sample_range (tuple of int, optional): The range of samples to process from the raw data file.
-                Default is (0, 30000*300), which processes the first 300 seconds of data.
             max_spike (int, optional): The maximum number of spikes to process. If the actual number of spikes exceeds
                 this value, the sample range will be adjusted to include only the first max_spike spikes.
                 Default is 1e6 (1 million spikes).
@@ -469,7 +467,7 @@ class Kilosort():
         MAX_MEMORY = int(4e9)
 
         if len(self.spike_times) > max_spike:
-            sample_range = (sample_range[0], self.spike_times[max_spike])
+            sample_range = (0, self.spike_times[max_spike])
 
         n_sample_file = self.meta['fileSizeBytes'] // (self.meta['nSavedChans'] * np.dtype(np.int16).itemsize)
         sample_range = (max(0, sample_range[0]), min(sample_range[1], n_sample_file))
