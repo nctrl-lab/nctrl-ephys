@@ -6,7 +6,7 @@ import pandas as pd
 import scipy.io as sio
 from sklearn.decomposition import PCA
 
-from .spikeglx import read_meta, read_analog, read_digital, read_bin, get_uV_per_bit, get_channel_idx
+from .spikeglx import read_meta, read_analog, read_digital, get_uV_per_bit, get_channel_idx
 from .utils import finder, confirm, savemat_safe, tprint, sync
 
 from .metrics import calculate_metrics, DEFAULT_PARAMS, DEFAULT_WAVEFORMS
@@ -50,21 +50,27 @@ def get_probe(meta: dict) -> dict:
     Returns
     -------
     dict
-        Dictionary with the following keys, all corresponding to NumPy ndarrays:
-        'chanMap': the channel indices that are included in the data.
-        'xc':      the x-coordinates (in micrometers) of the probe contact centers.
-        'yc':      the y-coordinates (in micrometers) of the probe contact centers.
-        'kcoords': shank or channel group of each contact (not used yet, set all to 0).
-        'n_chan':  the number of channels.
+        Dictionary with probe information for Kilosort4.
     """
-    probe_info = {
-        'chanMap': np.array([i['channel'] for i in meta['snsChanMap']['channel_map']], dtype=np.int32)[get_channel_idx(meta)],
-        'xc': np.array([i['x'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
-        'yc': np.array([i['z'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
-        'kcoords': np.array([i['shank'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
-        'n_chan': np.array(meta['nSavedChans'], dtype=np.float32)
+    geom_data = meta['snsGeomMap']
+    electrodes = pd.DataFrame(geom_data['electrodes'])
+    shank_spacing = geom_data['header']['shank_spacing']
+    
+    x = electrodes['x'].values.astype(np.float32) + electrodes['shank'].values.astype(np.float32) * shank_spacing
+    y = electrodes['z'].values.astype(np.float32)
+    connected = electrodes['used'].values.astype(np.bool_)
+    
+    channel_map = np.array([i['channel'] for i in meta['snsChanMap']['channel_map']], dtype=np.int32)
+    
+    channel_idx = get_channel_idx(meta)
+    
+    return {
+        'chanMap': channel_map[channel_idx][connected],
+        'xc': x[connected],
+        'yc': y[connected],
+        'kcoords': electrodes['shank'].values.astype(np.int32)[connected],
+        'n_chan': np.int32(meta['nSavedChans'] - 1),
     }
-    return probe_info
 
 def nearest_channel(channel_position, channel_index=None, count=14):
     """
@@ -791,9 +797,9 @@ if __name__ == "__main__":
     To run this code block, you can use the following command:
     > python -m ephys.ks
     """
-    ks = Kilosort("C:\\SGL_DATA\\Y02_20240731_M1_g0\\Y02_20240731_M1_g0_imec0\\kilosort4")
+    # ks = Kilosort("C:\\SGL_DATA\\Y02_20240731_M1_g0\\Y02_20240731_M1_g0_imec0\\kilosort4")
     # ks.load_waveforms()
-    ks.save_metrics()
+    # ks.save_metrics()
     # breakpoint()
     # ks.load_energy_pc1()
     # breakpoint()
@@ -807,7 +813,7 @@ if __name__ == "__main__":
     # for i in range(spike.n_unit):
     #     axs[i].imshow(spike.waveform_raw[i, :, :].T)
 
-    # run_ks4("C:\\SGL_DATA")
+    run_ks4("C:\\SGL_DATA")
     # fn = finder("C:\\SGL_DATA")
     # meta = read_meta(fn)
     # info = get_probe(meta)

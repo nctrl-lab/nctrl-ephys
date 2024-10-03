@@ -531,31 +531,32 @@ def plot_chanmap(filename, save_file=True):
     -----------
     filename : str
         Path to the meta file containing snsGeomMap data.
+    save_file : bool, optional
+        Whether to save the probe information to a file. Default is True.
     """
-
     meta = read_meta(filename)
     if 'snsGeomMap' not in meta:
         raise ValueError("snsGeomMap not found in meta data")
     
     geom_data = meta['snsGeomMap']
     if save_file:
-        import json
+        from .utils import savemat_safe
         probe = get_probe(meta)
-        probe_fn = os.path.join(os.path.dirname(filename), geom_data['header']['part_number'] + '.json')
-        with open(probe_fn, 'w') as f:
-            json.dump(probe, f)
+        probe_fn = os.path.join(os.path.dirname(filename), f"{geom_data['header']['part_number']}.mat")
+        savemat_safe(probe_fn, probe)
 
     fig, ax = plt.subplots(figsize=(4, 8))
     
-    x = [e['x'] + e['shank'] * geom_data['header']['shank_spacing'] for e in geom_data['electrodes']]
-    z = [e['z'] for e in geom_data['electrodes']]
-    used = [e['used'] for e in geom_data['electrodes']]
-    channel_id = range(len(geom_data['electrodes']))
+    electrodes = geom_data['electrodes']
+    shank_spacing = geom_data['header']['shank_spacing']
+    x = [e['x'] + e['shank'] * shank_spacing for e in electrodes]
+    z = [e['z'] for e in electrodes]
+    colors = ['blue' if e['used'] else 'red' for e in electrodes]
     
-    ax.scatter(x, z, c=['blue' if u else 'red' for u in used], alpha=0.6, marker='s')
+    ax.scatter(x, z, c=colors, alpha=0.6, marker='s')
     
-    for i, txt in enumerate(channel_id):
-        ax.annotate(txt, (x[i], z[i]), xytext=(3, -2), textcoords='offset points', fontsize=8)
+    for i, (xi, zi) in enumerate(zip(x, z)):
+        ax.annotate(str(i), (xi, zi), xytext=(3, -2), textcoords='offset points', fontsize=8)
     
     ax.set_xlabel('X position (µm)')
     ax.set_ylabel('Z position (µm)')
@@ -584,19 +585,26 @@ def get_probe(meta: dict) -> dict:
         'kcoords': shank or channel group of each contact (not used yet, set all to 0).
         'n_chan':  the number of channels.
     """
-    probe_info = {
-        'chanMap': np.array([i['channel'] for i in meta['snsChanMap']['channel_map']], dtype=np.int32)[get_channel_idx(meta)],
-        'xc': np.array([i['x'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
-        'yc': np.array([i['z'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
-        'kcoords': np.array([i['shank'] for i in meta['snsGeomMap']['electrodes']], dtype=np.float32),
-        'n_chan': np.array(meta['nSavedChans'], dtype=np.float32)
+    geom_data = meta['snsGeomMap']
+    electrodes = pd.DataFrame(geom_data['electrodes'])
+    shank_spacing = geom_data['header']['shank_spacing']
+    
+    x = electrodes['x'].values.astype(np.float32) + electrodes['shank'].values.astype(np.float32) * shank_spacing
+    y = electrodes['z'].values.astype(np.float32)
+    connected = electrodes['used'].values.astype(np.bool_)
+    
+    channel_map = np.array([i['channel'] for i in meta['snsChanMap']['channel_map']], dtype=np.int32)
+    
+    channel_idx = get_channel_idx(meta)
+
+    return {
+        'chanMap': channel_map[channel_idx] + 1,
+        'xcoords': x,
+        'ycoords': y,
+        'kcoords': electrodes['shank'].values.astype(np.int32),
+        'connected': connected,
     }
-    return probe_info
-
-
 
 if __name__ == '__main__':
     fn = finder("C:\\SGL_DATA")
-    # meta = read_meta(fn)
-    # data = read_digital(fn)
-    plot_analog(fn)
+    plot_chanmap(fn)
