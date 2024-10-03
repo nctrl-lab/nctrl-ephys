@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import scipy.io as sio
 from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
 
 from .spikeglx import read_meta, read_analog, read_digital, get_uV_per_bit, get_channel_idx
 from .utils import finder, confirm, savemat_safe, tprint, sync
@@ -273,6 +274,14 @@ class Kilosort():
         if os.path.exists(os.path.join(self.path, 'pc1.npy')):
             self.pc1 = np.load(os.path.join(self.path, 'pc1.npy'))
             tprint(f"Loaded PC1: it has {np.isnan(self.pc1[:, 0]).sum()}/{self.pc1.shape[0]} NaN values")
+        
+        if os.path.exists(os.path.join(self.path, 'waveform_raw.npy')):
+            self.waveform_raw_all = np.load(os.path.join(self.path, 'waveform_raw.npy'))
+            tprint(f"Loaded waveform_raw")
+
+        if os.path.exists(os.path.join(self.path, 'peak_raw.npy')):
+            self.peak_raw_all = np.load(os.path.join(self.path, 'peak_raw.npy'))
+            tprint(f"Loaded peak_raw")
 
     def load_kilosort(self, load_all=False):
         """
@@ -352,6 +361,7 @@ class Kilosort():
             waveform[i] = mean_waveform[:, self.cluster_ind[i]] / 10
 
         self.waveform_all = waveform[:, :, 0] # just use the main channel
+        self.peak_all = -self.waveform_all.min(axis=1)
 
         self.waveform = waveform[np.isin(self.cluster_id, self.cluster_good)]
         self.waveform_idx = nearest_channel(self.channel_position, cluster_idx) # (n_unit, 14)
@@ -427,7 +437,7 @@ class Kilosort():
         
         tprint("Finished waveform (raw)")
 
-    def load_energy_pc1(self, spk_range=(-20, 41), sample_range=(0, 30000*300), max_spike=100000):
+    def load_energy_pc1(self, spk_range=(-20, 41), sample_range=(0, 30000*300), max_spike=200000):
         """
         Calculate energy and first principal component (PC1) for each spike.
 
@@ -469,7 +479,7 @@ class Kilosort():
         n_batch = int(np.ceil(n_sample / n_sample_per_batch))
 
         spks = self.spike_times
-        idx = np.digitize(self.spike_clusters, self.cluster_id, right=True)
+        idx = np.array([self.cluster_id_inv[cluster] for cluster in self.spike_clusters])
 
         in_range = (spks >= sample_range[0] - spk_range[0]) & (spks < sample_range[1] - spk_range[1])
         spks, idx = spks[in_range], idx[in_range]
@@ -499,34 +509,47 @@ class Kilosort():
             indices = np.broadcast_to(indices, (len(spk_no), spk_width, 14))
             waveforms = data[indices, channels[:, None]]
             spkwav[spk_no] = waveforms - waveforms[:, :5, :].mean(axis=1, keepdims=True)
-            del data
+            del data, waveforms
 
         spkwav[np.isinf(spkwav) | np.isnan(spkwav)] = 0
+
+        # Waveform features
+        self.waveform_raw_all = np.full((len(self.cluster_id), spk_width), np.nan)
+        for i in np.unique(idx):
+            self.waveform_raw_all[i] = np.nanmedian(spkwav[idx == i, :, 0], axis=0)
+        self.peak_raw_all = -np.nanmin(self.waveform_raw_all, axis=1)
+
         self.energy = np.full((self.spike_times.shape[0], 14), np.nan)
         self.energy[in_range] = np.linalg.norm(spkwav, axis=1) / np.sqrt(spk_width)
         spkwav /= np.linalg.norm(spkwav, axis=1, keepdims=True)
         spkwav[np.isinf(spkwav) | np.isnan(spkwav)] = 0
 
-        channel_ind_idx = self.cluster_ind[idx]
+        channel_ind_idx = cluster_channels[idx]
         pc1 = np.full((spkwav.shape[0], spkwav.shape[2]), np.nan)
-        for channel in np.unique(self.cluster_ind):
+        for channel in np.unique(cluster_channels):
             in_channel = np.where(channel_ind_idx == channel)
             waves = spkwav[in_channel[0], 5:, in_channel[1]]
-            waves_z = (waves - waves.mean(axis=0)) / waves.std(axis=0)
-            pc1[in_channel[0], in_channel[1]] = PCA(n_components=1).fit_transform(waves_z).flatten()
-        
+            if waves.shape[0] > 0:
+                wave_mean = np.nanmean(waves, axis=0, keepdims=True)
+                wave_std = np.nanstd(waves, axis=0, keepdims=True)
+                wave_std[wave_std == 0] = 1
+                waves_z = (waves - wave_mean) / wave_std
+                np.nan_to_num(waves_z, copy=False, nan=0, posinf=0, neginf=0)
+                pca = PCA(n_components=1)
+                pc1[in_channel[0], in_channel[1]] = pca.fit_transform(waves_z).ravel()
+
         self.pc1 = np.full((self.spike_times.shape[0], 14), np.nan)
         self.pc1[in_range] = pc1
 
-        # Waveform features
-        unique_idx = np.unique(idx)
-        self.waveform_raw_all = np.array([spkwav[idx == i, :, 0].mean(axis=0) for i in unique_idx])
-        self.peak_raw_all = -self.waveform_raw_all.min(axis=1)
 
         tprint("Saving energy")
         np.save(os.path.join(self.path, 'energy.npy'), self.energy)
         tprint("Saving PC1")
         np.save(os.path.join(self.path, 'pc1.npy'), self.pc1)
+        tprint("Saving waveform_raw")
+        np.save(os.path.join(self.path, 'waveform_raw.npy'), self.waveform_raw_all)
+        tprint("Saving peak_raw")
+        np.save(os.path.join(self.path, 'peak_raw.npy'), self.peak_raw_all)
 
     def load_metrics(self):
         """
@@ -796,11 +819,12 @@ if __name__ == "__main__":
     To run this code block, you can use the following command:
     > python -m ephys.ks
     """
-    # ks = Kilosort("C:\\SGL_DATA\\Y02_20240731_M1_g0\\Y02_20240731_M1_g0_imec0\\kilosort4")
+    ks = Kilosort()
     # ks.load_waveforms()
-    # ks.save_metrics()
+    ks.load_energy_pc1()
+    # ks.load_metrics()
+    ks.save_metrics()
     # breakpoint()
-    # ks.load_energy_pc1()
     # breakpoint()
     # ks.load_metrics()
     # ks.save()
@@ -812,7 +836,7 @@ if __name__ == "__main__":
     # for i in range(spike.n_unit):
     #     axs[i].imshow(spike.waveform_raw[i, :, :].T)
 
-    run_ks4("C:\\SGL_DATA")
+    # run_ks4("C:\\SGL_DATA")
     # fn = finder("C:\\SGL_DATA")
     # meta = read_meta(fn)
     # info = get_probe(meta)
