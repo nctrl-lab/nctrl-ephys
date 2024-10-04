@@ -78,8 +78,9 @@ def run_catgt(path=None):
     
     cmds = []
     for session in sessions:
-        dest_dir = os.path.dirname(session) # parent folder
-        if glob.glob(f"{dest_dir}/catgt_*/"):
+        session_name = os.path.basename(session)
+        dest_dir = os.path.dirname(session)
+        if glob.glob(f"{dest_dir}/catgt_{session_name}*"):
             print(f"Skipping {session}: CatGT output already exists.")
             if not inquirer.confirm("Do you want to overwrite?", default=True):
                 continue
