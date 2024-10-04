@@ -373,7 +373,7 @@ class Kilosort():
 
         tprint("Finished waveform (template)")
 
-    def load_waveforms(self, spk_range=(-20, 41), sample_range=(0, 30000*300)):
+    def load_waveforms(self, spk_range=(-20, 41), max_spike=1000000):
         """
         Load waveforms from the raw data file.
 
@@ -382,7 +382,9 @@ class Kilosort():
 
         Args:
             spk_range (tuple, optional): The range of spike times to load, in samples. Default is (-20, 41).
-            sample_range (tuple, optional): The range of samples to load from the file. Default is (0, 30000*300).
+            max_spike (int, optional): The maximum number of spikes to process. If the actual number of spikes exceeds
+                this value, the sample range will be adjusted to include only the first max_spike spikes.
+                Default is 1000000.
 
         Attributes modified:
             waveform_raw, Vpp_raw, peak_raw
@@ -393,8 +395,13 @@ class Kilosort():
 
         MAX_MEMORY = int(4e9)
 
-        n_sample_file = self.meta['fileSizeBytes'] // (self.meta['nSavedChans'] * np.dtype(np.int16).itemsize)
-        sample_range = (max(0, sample_range[0]), min(sample_range[1], n_sample_file))
+        if len(self.spike_times) > max_spike:
+            sample_range = (0, self.spike_times[max_spike])
+        else:
+            sample_range = (0, self.spike_times[-1])
+
+        # n_sample_file = self.meta['fileSizeBytes'] // (self.meta['nSavedChans'] * np.dtype(np.int16).itemsize)
+        # sample_range = (max(0, sample_range[0]), min(sample_range[1], n_sample_file))
         
         n_sample = sample_range[1] - sample_range[0]
         n_sample_per_batch = min(int(MAX_MEMORY / self.n_channel / np.dtype(np.int16).itemsize), n_sample)
@@ -468,9 +475,11 @@ class Kilosort():
 
         if len(self.spike_times) > max_spike:
             sample_range = (0, self.spike_times[max_spike])
+        else:
+            sample_range = (0, self.spike_times[-1])
 
-        n_sample_file = self.meta['fileSizeBytes'] // (self.meta['nSavedChans'] * np.dtype(np.int16).itemsize)
-        sample_range = (max(0, sample_range[0]), min(sample_range[1], n_sample_file))
+        # n_sample_file = self.meta['fileSizeBytes'] // (self.meta['nSavedChans'] * np.dtype(np.int16).itemsize)
+        # sample_range = (max(0, sample_range[0]), min(sample_range[1], n_sample_file))
         
         n_sample = sample_range[1] - sample_range[0]
         n_sample_per_batch = min(int(MAX_MEMORY / self.n_channel / np.dtype(np.int16).itemsize), n_sample)
