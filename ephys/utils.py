@@ -151,12 +151,13 @@ class FileReorderApp:
             return
         
         new_index = index + direction
-        self.listbox.insert(new_index, self.listbox.get(index))
-        self.listbox.delete(index if index < new_index else index + 1)
+        item = self.listbox.get(index)
+        self.listbox.delete(index)
+        self.listbox.insert(new_index, item)
         self.listbox.selection_clear(0, tk.END)
         self.listbox.selection_set(new_index)
         self.listbox.see(new_index)
-    
+
     move_up = lambda self: self.move_item(-1)
     move_down = lambda self: self.move_item(1)
     
@@ -280,4 +281,4 @@ def rollover_recovery(data, max_value=2**32):
 
 if __name__ == "__main__":
     # print(finder(folder=True, multiple=True, pattern=r'.bin$'))
-    confirm("Are you sure you want to delete all files in this folder?")
+    print(file_reorder(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']))
