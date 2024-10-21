@@ -19,16 +19,23 @@ pip install git+https://github.com/nctrl-lab/nctrl-ephys.git
 ## Pipelines for SpikeGLX data
 1. Run SpikeGLX to record Neuropixels data
 2. Run CatGT (`ephys catgt`) to concatenate and denoise the data
-3. Run Kilosort (`ephys runks`)
-4. Run phy to curate the Kilosort results and save the result (`ephys saveks`)
-    - This will also extract the sync and event times data from SpikeGLX files.
-    - The final output will be a `.mat` file including the spike, sync, and event times (from nidq file) data.
+3. Generate the probe map by reading meta file (`ephys probe`)
+    - This will generate a `PROBE_TYPE.mat` file, which can be useful for the Kilosort GUI.
+    - It also plots the probe map and channel numbers.
+4. Run Kilosort (`ephys runks`)
+    - Don't forget to switch the conda environment (`conda activate kilosort`) if the Kilosort is installed in a different environment.
+    - If you would like to save metrics (L-ratio, isolation distance, waveform similarity, and overall scores), run `ephye runks --metric`.
+5. Run phy to curate the Kilosort results (`conda activate phy2`)
+6. Save the results (`ephys saveks`)
+    - This will also extract sync and event times data from SpikeGLX files.
+    - The final output will be a `.mat` file that includes the spike, sync, and event times (from the NIDQ file).
     - NIDQ time will be synced with the spike data.
-5. Extract behavioral data from VR log file (`ephys task`)
+7. Extract behavioral data from the VR log file (`ephys task`)
     - This will extract 'vr', 'trial', 'task_info', 'task_parameter', and 'monitor_info'.
-    - It will be merged with the previous `.mat` file.
+    - The extracted data will be merged with the previous `.mat` file.
     - The final file will represent one behavioral session.
-6. Load the data using `ephys.spike.Spike` class.
+8. Load the data using `ephys.spike.Spike` class.
+
 ```python
 from ephys.spike import Spike
 from ephys.utils import finder
