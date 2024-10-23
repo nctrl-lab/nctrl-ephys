@@ -390,6 +390,9 @@ class BMI:
             # Check for any potential issues in the loaded data
             if self.fet['frame'].diff().min() < 0:
                 tprint("\033[91mWarning: Time values are not monotonically increasing.\033[0m")
+                in_idx = np.where(self.fet['frame'].diff() < 0)[0][0]
+                self.fet = self.fet.iloc[:in_idx].reset_index(drop=True)
+
             if np.any(np.isnan(self.fet.values)):
                 tprint("\033[91mWarning: NaN values detected in fet data.\033[0m")
             if np.any(np.isinf(self.fet.values)):
@@ -419,6 +422,11 @@ class BMI:
             path = self.path
 
         self.nidq_fn = finder(path, pattern=r'\.nidq.meta$', ask=False)
+
+        if not self.nidq_fn:
+            tprint("No nidq file found")
+            return
+
         n_fn = len(self.nidq_fn)
         self.nidq = [None] * n_fn
         self.time_sync_nidq = [None] * n_fn
@@ -455,6 +463,11 @@ class BMI:
             path = self.path
         
         self.tdms_fn = finder(path, pattern=r'\.tdms$', multiple=True)
+
+        if not self.tdms_fn:
+            tprint("No tdms file found")
+            return
+
         n_fn = len(self.tdms_fn)
         self.tdms = [None] * n_fn
         self.time_sync_tdms = [None] * n_fn

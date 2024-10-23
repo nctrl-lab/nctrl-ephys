@@ -4,6 +4,7 @@ import pandas as pd
 from scipy import signal
 from scipy.io import loadmat
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 
 from .utils import tprint, finder
 
@@ -223,6 +224,9 @@ def get_spike_bin(time_aligned, bin_size=0.01, window=[-5, 5]):
     return t, time_binned
 
 def smooth(time_binned, type='gaussian', sigma=10, axis=1, mode='same'):
+    if sigma == 0:
+        return time_binned
+
     if type == 'gaussian':
         if hasattr(signal, "gaussian"):
             window = signal.gaussian(5*sigma, sigma)
@@ -274,7 +278,39 @@ def get_raster_psth(time_spike, time_event, type_event=None,
     return {'x': x, 'y': y}, {'t': t, 'y': psth, 'sem': psth_sem}
 
 
-def plot_raster_psth(time_spike, time_event, type_event=None, window=[-5, 5], reorder=1, bin_size=0.01, sigma=10, fig=None):
+def plot_raster_psth(time_spike, time_event, type_event=None, window=[-5, 5], reorder=1, bin_size=0.01, sigma=10, fig=None, plot_bar=False):
+    """
+    Plot raster and PSTH (Peri-Stimulus Time Histogram) for spike data.
+
+    Parameters:
+    -----------
+    time_spike : array-like
+        Spike times.
+    time_event : array-like
+        Event times to align spikes to.
+    type_event : array-like, optional
+        Event types for different conditions. If None, all events are treated as the same type.
+        * It can be the array of event types such as [0, 0, 1, 0, 2, 1, ...].
+        * The length of type_event should be the same as time_event.
+    window : list of two floats, default [-5, 5]
+        Time window around each event for analysis, in seconds.
+    reorder : int, default 1
+        If 1, raster plot will be ordered by type_event. If 0, original order is maintained.
+    bin_size : float, default 0.01
+        Size of time bins for PSTH, in seconds.
+    sigma : int, default 10
+        Smoothing parameter for PSTH.
+        If 0, no smoothing is applied.
+    fig : matplotlib.figure.Figure, optional
+        Figure to plot on. If None, a new figure is created.
+    plot_bar : bool, default False
+        If True, plot PSTH as a bar plot instead of a line plot.
+
+    Returns:
+    --------
+    fig : matplotlib.figure.Figure
+        The figure containing the raster and PSTH plots.
+    """
     if fig is None:
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 4), sharex=True)
     else:
@@ -287,12 +323,19 @@ def plot_raster_psth(time_spike, time_event, type_event=None, window=[-5, 5], re
     cmap = [(0, 0, 0)] + list(plt.get_cmap('tab10').colors)
     for i, (x, y, y_psth, y_sem) in enumerate(zip(raster['x'], raster['y'], psth['y'], psth['sem'])):
         color = cmap[i % len(cmap)]
-        ax1.plot(x, y, color=color, linewidth=0.5)
-        ax2.plot(psth['t'], y_psth, color=color)
-        ax2.fill_between(psth['t'], y_psth - y_sem, y_psth + y_sem, color=color, alpha=0.2, linewidth=0)
+        if x is not None and y is not None:
+            ax1.plot(x, y, color=color, linewidth=0.5)
 
-    ylim_raster = [0, max(np.nanmax(y) for y in raster['y'])]
+        if y_psth is not None:
+            if not plot_bar:
+                ax2.plot(psth['t'], y_psth, color=color)
+                ax2.fill_between(psth['t'], y_psth - y_sem, y_psth + y_sem, color=color, alpha=0.2, linewidth=0)
+            else:
+                ax2.bar(psth['t'], y_psth, color=color, width=bin_size, linewidth=0)
+
+    ylim_raster = [0, max((np.nanmax(y) if y is not None else 1) for y in raster['y'])]
     ylim_psth = [0, np.nanmax(psth['y']) * 1.1]
+    
     for ax, ylim in [(ax1, ylim_raster), (ax2, ylim_psth)]:
         ax.vlines(0, 0, ylim[1], color='gray', linestyle='--', linewidth=0.5)
         ax.set_xlim(window)
@@ -306,8 +349,79 @@ def plot_raster_psth(time_spike, time_event, type_event=None, window=[-5, 5], re
     fig.tight_layout()
     return fig
 
+def plot_tagging(time_spikes, time_onset, time_offset=None, window=[-0.05, 0.1], bin_size=0.001):
+    """
+    Plot raster, PSTH, and cumulative plot for spike tagging analysis.
 
-def get_latency(spike, event_onset, event_offset, duration=0.08, offset=0.3, min_latency=0.02, prob=0.05):
+    Parameters:
+    -----------
+    time_spikes : list of array-like
+        List of spike times for each unit.
+    time_onset : array-like
+        Onset times of the tagging events.
+    time_offset : array-like, optional
+        Offset times of the tagging events. If None, assumed to be the same as time_onset.
+    window : list of two floats, default [-0.05, 0.1]
+        Time window around each event for analysis, in seconds.
+    bin_size : float, default 0.001
+        Size of time bins for PSTH, in seconds.
+    """
+    n_unit = len(time_spikes)
+
+    if time_offset is None:
+        time_offset = time_onset
+
+    cmap = [(0, 0, 0)] + list(plt.get_cmap('tab10').colors)
+    f = plt.figure(figsize=(10, 4*n_unit))
+    gs_main = gridspec.GridSpec(n_unit, 2, wspace=0.3, hspace=0.3)
+
+    for i_unit in range(n_unit):
+        # calculate raster and psth
+        raster, psth = get_raster_psth(time_spikes[i_unit], time_onset, window=window, bin_size=bin_size, sigma=0)
+
+        # calculate cumulative plot
+        c = get_latency(time_spikes[i_unit], time_onset, time_offset, duration=window[1])
+
+        gs_unit = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs_main[i_unit, 0], hspace=0.05)
+        ax0 = f.add_subplot(gs_unit[0])
+        ax1 = f.add_subplot(gs_unit[1])
+
+        gs_latency = gridspec.GridSpecFromSubplotSpec(1, 1, subplot_spec=gs_main[i_unit, 1])
+        ax2 = f.add_subplot(gs_latency[0])
+
+        for i, (x, y, y_psth) in enumerate(zip(raster['x'], raster['y'], psth['y'])):
+            color = cmap[i % len(cmap)]
+            if x is not None and y is not None:
+                ax0.plot(x, y, color=color, linewidth=0.5)
+
+            if y_psth is not None:
+                ax1.bar(psth['t'], y_psth, color=color, width=bin_size, linewidth=0)
+
+        ax2.plot(c['time_event'], c['count_event'], color=[0.0, 0.718, 1.0], linewidth=0.75)
+        ax2.plot(c['time_base'], c['count_base'], color='gray', linestyle='--', linewidth=0.5)
+
+        # Set labels and titles
+        ax0.set_title(f'Unit {i_unit+1}')
+        ax0.set_ylabel('Trial')
+        ax1.set_xlabel('Time (s)')
+        ax1.set_ylabel('Firing Rate (Hz)')
+        ax2.set_xlabel('Time (s)')
+        ax2.set_ylabel('Cumulative Probability')
+
+        # Set x-axis limits for raster and PSTH
+        ax0.set_xlim(window)
+        ax1.set_xlim(window)
+
+        # Remove top and right spines
+        for ax in [ax0, ax1, ax2]:
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+        # Add vertical line at t=0
+        for ax in [ax0, ax1]:
+            ax.axvline(x=0, color='gray', linestyle='--', linewidth=0.5)
+
+def get_latency(spike, event_onset, event_offset, duration=0.08, offset=0.3):
     assert(len(event_onset) == len(event_offset))
     n_event = len(event_onset)
 
@@ -316,7 +430,7 @@ def get_latency(spike, event_onset, event_offset, duration=0.08, offset=0.3, min
     for i_event in range(n_event - 1):
         base = np.arange(event_offset[i_event] + offset, event_onset[i_event + 1], duration)
         n_base_temp = len(base) - 1
-        if n_base_temp == 0:
+        if n_base_temp < 1:
             continue
 
         spike_event.append(spike[(spike >= event_onset[i_event+1]) & (spike < event_onset[i_event+1] + duration)] - event_onset[i_event+1])
@@ -338,12 +452,11 @@ if __name__ == '__main__':
     path = finder(path="C:\\SGL_DATA", msg='Select a session file', pattern=r'.mat$')
     spike = Spike(path)
 
-    # interactive plot
-    spike.plot()
+    # # interactive plot
+    # spike.plot()
 
     # plot raster and psth
-    time_spike = spike.spike['time'][0]
-    time_event = spike.nidq.query('chan == 2 and type == 1')['time_imec'].values
-    plot_raster_psth(time_spike, time_event)
+    time_event = spike.nidq.query('chan == 5 and type == 1')['time_imec'].values
+    plot_tagging(spike.spike['time'], time_event)
     plt.show()
     breakpoint()
