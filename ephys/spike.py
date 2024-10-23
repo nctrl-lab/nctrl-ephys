@@ -334,7 +334,7 @@ def plot_raster_psth(time_spike, time_event, type_event=None, window=[-5, 5], re
                 ax2.bar(psth['t'], y_psth, color=color, width=bin_size, linewidth=0)
 
     ylim_raster = [0, max((np.nanmax(y) if y is not None else 1) for y in raster['y'])]
-    ylim_psth = [0, np.nanmax(psth['y']) * 1.1]
+    ylim_psth = [0, np.nanmax(psth['y'] + psth['sem']) * 1.1]
     
     for ax, ylim in [(ax1, ylim_raster), (ax2, ylim_psth)]:
         ax.vlines(0, 0, ylim[1], color='gray', linestyle='--', linewidth=0.5)
@@ -375,9 +375,13 @@ def plot_tagging(time_spikes, time_onset, time_offset=None, window=[-0.05, 0.1],
     f = plt.figure(figsize=(10, 4*n_unit))
     gs_main = gridspec.GridSpec(n_unit, 2, wspace=0.3, hspace=0.3)
 
+    ylim_raster = [0, len(time_onset)]
+    ylim_c = [0, 1]
+
     for i_unit in range(n_unit):
         # calculate raster and psth
         raster, psth = get_raster_psth(time_spikes[i_unit], time_onset, window=window, bin_size=bin_size, sigma=0)
+        ylim_psth = [0, np.nanmax(psth['y']) * 1.1]
 
         # calculate cumulative plot
         c = get_latency(time_spikes[i_unit], time_onset, time_offset, duration=window[1])
@@ -411,6 +415,10 @@ def plot_tagging(time_spikes, time_onset, time_offset=None, window=[-0.05, 0.1],
         # Set x-axis limits for raster and PSTH
         ax0.set_xlim(window)
         ax1.set_xlim(window)
+        ax2.set_xlim([0, window[1]])
+        ax0.set_ylim(ylim_raster)
+        ax1.set_ylim(ylim_psth)
+        ax2.set_ylim(ylim_c)
 
         # Remove top and right spines
         for ax in [ax0, ax1, ax2]:
