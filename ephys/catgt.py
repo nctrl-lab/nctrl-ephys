@@ -24,30 +24,7 @@ import subprocess
 import tkinter as tk
 from tkinter import filedialog
 
-from .utils import finder
-
-def get_catgt():
-    fn = keyring.get_password("nctrl", "catgt")
-    if fn and os.path.exists(fn):
-        print(f"Using CatGT executable: {fn}")
-        return fn
-
-    root = tk.Tk()
-    root.withdraw()
-    root.call('wm', 'attributes', '.', '-topmost', True)
-    print("\033[1;36mSelect the CatGT executable\033[0m")
-    fn = filedialog.askopenfilename(
-        title="Select the CatGT executable",
-        filetypes=[("Executable file", "*.exe")]
-    )
-    root.destroy()
-
-    if fn and os.path.exists(fn) and os.path.basename(fn) == 'CatGT.exe':
-        keyring.set_password("nctrl", "catgt", fn)
-        return fn
-    else:
-        print("Invalid selection. Please choose the CatGT.exe file.")
-        return None
+from .utils import finder, get_file
 
 def get_sessions(path=None):
     print("\033[1;36mPlease select the sessions to process using CatGT.\033[0m")
@@ -58,7 +35,7 @@ def get_sessions(path=None):
     return sessions
 
 def run_catgt(path=None):
-    catgt = get_catgt()
+    catgt = get_file("catgt", "CatGT.exe", "CatGT")
     if not catgt:
         print("No CatGT executable found. Please select the CatGT.exe file.")
         return
