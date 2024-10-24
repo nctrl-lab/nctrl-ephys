@@ -125,7 +125,6 @@ class Kilosort():
         sample_rate (float): Sampling rate of the recording.
         file_create_time (str): Time when the file was created.
         data_file_path (str): Path to the raw data file.
-        data_file_path_orig (str): Original path to the raw data file.
         spike_times (ndarray): Array of spike times.
         spike_clusters (ndarray): Array of cluster IDs for each spike.
         spike_templates (ndarray): Array of template IDs for each spike.
@@ -180,13 +179,22 @@ class Kilosort():
             ValueError: If the specified path does not exist or is not a valid directory.
         """
         if path is None:
-            fn = finder(None, 'params.py$')
-            path = os.path.dirname(fn)
+            path = finder(None, 'params.py$')
+        
+        if os.path.isfile(path):
+            path = os.path.dirname(path)
 
         if not os.path.exists(path):
             raise ValueError(f"Path {path} does not exist")
         
-        self.path = os.path.dirname(path) if os.path.isfile(path) else path
+        # look for current directory
+        for _ in range(2):  # Check current and parent directory
+            if any('ap.bin' in f for f in os.listdir(path)):
+                self.path = path
+                break
+            path = os.path.dirname(path)
+        else:
+            raise ValueError(f"No ap.bin file found in {path} or its parent directory")
 
         if not os.path.isdir(self.path):
             raise ValueError(f"Path {self.path} is not a valid directory")
@@ -240,15 +248,8 @@ class Kilosort():
         Raises:
             ValueError: If the data file name does not match the original name and the user chooses not to continue.
         """
-        ops = np.load(os.path.join(self.path, 'ops.npy'), allow_pickle=True).item()
-        self.data_file_path_orig = str(ops.get('filename'))
         parent_folder = os.path.dirname(self.path)
         self.data_file_path = finder(parent_folder, 'ap.bin$', ask=False)[0]
-
-        # check if the data filename matches the original one
-        if os.path.basename(self.data_file_path) != os.path.basename(self.data_file_path_orig):
-            if not confirm(f"Data file name does not match original name. {self.data_file_path} != {self.data_file_path_orig}. Do you want to continue?"):
-                raise ValueError("Data file name does not match original name.")
 
         self.meta = read_meta(self.data_file_path)
         self.n_channel = self.meta['snsApLfSy']['AP']
@@ -265,16 +266,18 @@ class Kilosort():
         """
         tprint(f"Loading Kilosort data from {self.path}")
 
-        self.spike_times = np.load(os.path.join(self.path, "spike_times.npy"))
-        self.spike_clusters = np.load(os.path.join(self.path, 'spike_clusters.npy'))
-        self.spike_templates = np.load(os.path.join(self.path, 'spike_templates.npy'))
-        self.spike_positions = np.load(os.path.join(self.path, 'spike_positions.npy'))
+        # Kilosort2 saves unsqueezed arrays. 1D arrays are saved as 2D with shape (n_spike, 1)
+        self.spike_times = np.load(os.path.join(self.path, "spike_times.npy")).squeeze().astype(np.int64)
+        self.spike_clusters = np.load(os.path.join(self.path, 'spike_clusters.npy')).squeeze().astype(np.int64)
+        self.spike_templates = np.load(os.path.join(self.path, 'spike_templates.npy')).squeeze().astype(np.int64)
+        if os.path.exists(os.path.join(self.path, 'spike_positions.npy')):
+            self.spike_positions = np.load(os.path.join(self.path, 'spike_positions.npy'))
         self.pc_features = np.load(os.path.join(self.path, 'pc_features.npy'))
         self.pc_feature_ind = np.load(os.path.join(self.path, 'pc_feature_ind.npy'))
         self.templates = np.load(os.path.join(self.path, 'templates.npy'))
-        self.amplitudes = np.load(os.path.join(self.path, 'amplitudes.npy'))
+        self.amplitudes = np.load(os.path.join(self.path, 'amplitudes.npy')).squeeze()
         self.winv = np.load(os.path.join(self.path, 'whitening_mat_inv.npy'))
-        self.channel_map = np.load(os.path.join(self.path, 'channel_map.npy'))
+        self.channel_map = np.load(os.path.join(self.path, 'channel_map.npy')).squeeze().astype(np.int64)
         self.channel_position = np.load(os.path.join(self.path, 'channel_positions.npy'))
 
         if os.path.exists(os.path.join(self.path, 'energy.npy')):
@@ -358,13 +361,18 @@ class Kilosort():
         self.time = np.array([self.spike_times[self.spike_clusters == c] / self.sample_rate for c in self.cluster_good], dtype=object)
         self.frame = np.array([self.spike_times[self.spike_clusters == c] for c in self.cluster_good], dtype=object)
         self.firing_rate = [len(i) / (self.spike_times.max() / self.sample_rate) for i in self.time]
-        self.position = np.array([np.median(self.spike_positions[self.spike_clusters == c], axis=0) 
-                                  for c in self.cluster_good])
+        if hasattr(self, 'spike_positions'):
+            self.position = np.array([np.median(self.spike_positions[self.spike_clusters == c], axis=0) 
+                                      for c in self.cluster_good])
         
         tprint("Finished spike times")
     
         # Template waveforms
         temp_unwhitened = self.templates @ self.winv
+
+        if temp_unwhitened.shape[1] > 61: # Kilosort2 saves 82 samples instead of 61 (the first 21 points are zeros)
+            temp_unwhitened = temp_unwhitened[:, -61:, :]
+        
         template_idx = np.ptp(temp_unwhitened, axis=1).argmax(axis=-1) # main index for each template
         cluster_idx = template_idx[self.cluster_template_id] # main index for each cluster
         cluster_idx_all = template_idx[cluster_template_id_all] # main index for all clusters
@@ -509,7 +517,7 @@ class Kilosort():
         n_batch = int(np.ceil(n_sample / n_sample_per_batch))
 
         spks = self.spike_times
-        idx = np.array([self.cluster_id_inv[cluster] for cluster in self.spike_clusters])
+        idx = np.array([self.cluster_id_inv[int(cluster)] for cluster in self.spike_clusters])
 
         in_range = (spks >= sample_range[0] - spk_range[0]) & (spks < sample_range[1] - spk_range[1])
         spks, idx = spks[in_range], idx[in_range]
@@ -762,7 +770,6 @@ class Kilosort():
             'time': self.time,
             'frame': self.frame,
             'firing_rate': self.firing_rate,
-            'position': self.position,
             'waveform': self.waveform,
             'waveform_idx': self.waveform_idx,
             'waveform_channel': self.waveform_channel,
@@ -781,9 +788,13 @@ class Kilosort():
             'n_channel': self.n_channel,
             'file_create_time': self.file_create_time,
             'data_file_path': self.data_file_path,
-            'data_file_path_orig': self.data_file_path_orig,
             'sample_rate': self.sample_rate,
         }
+
+        if hasattr(self, 'position'):
+            spike.update({
+                'position': self.position,
+            })
 
         if hasattr(self, 'waveform_raw'):
             spike.update({
@@ -849,12 +860,12 @@ if __name__ == "__main__":
     To run this code block, you can use the following command:
     > python -m ephys.ks
     """
-    run_ks2()
-    # ks = Kilosort()
+    # run_ks2()
+    ks = Kilosort()
     # ks.load_waveforms()
     # ks.load_energy_pc1()
     # ks.load_metrics()
-    # ks.save_metrics()
+    ks.save_metrics()
     # breakpoint()
     # breakpoint()
     # ks.load_metrics()
