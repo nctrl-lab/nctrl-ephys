@@ -279,6 +279,66 @@ def rollover_recovery(data, max_value=2**32):
     return data + np.cumsum(rollovers) * max_value
 
 
+def get_file(key, pattern="matlab.exe", name=None, initialdir=None, reset=False):
+    import keyring
+    import tkinter as tk
+    from tkinter import filedialog
+
+    fn = keyring.get_password("nctrl", key)
+    if fn and os.path.exists(fn) and not reset:
+        print(f"Using {name} executable: {fn}")
+        return fn
+
+    pattern_ext = "*." + pattern.split('.')[-1]
+
+    root = tk.Tk()
+    root.withdraw()
+    root.call('wm', 'attributes', '.', '-topmost', True)
+    print(f"\033[1;36mSelect the {name} executable\033[0m")
+    fn = filedialog.askopenfilename(
+        title=f"Select the {name} executable ({pattern_ext})",
+        filetypes=[("Executable file", pattern_ext)],
+        initialdir=initialdir
+    )
+    root.destroy()
+
+    if fn and os.path.exists(fn) and os.path.basename(fn) == pattern:
+        keyring.set_password("nctrl", key, fn)
+        return fn
+    else:
+        print(f"Invalid selection. Please choose the {name} executable ({pattern}).")
+        return None
+
+
+def get_path(key, name=None, initialdir=None, reset=False):
+    import keyring
+    import tkinter as tk
+    from tkinter.filedialog import askdirectory
+
+    fn = keyring.get_password("nctrl", key)
+    if fn and os.path.exists(fn) and not reset:
+        print(f"Using {name} path: {fn}")
+        return fn
+
+    root = tk.Tk()
+    root.withdraw()
+    root.call('wm', 'attributes', '.', '-topmost', True)
+    print(f"\033[1;36mSelect the {name} path\033[0m")
+    fn = askdirectory(
+        title=f"Select the {name} path",
+        initialdir=initialdir
+    )
+    root.destroy()
+
+    if fn and os.path.exists(fn):
+        keyring.set_password("nctrl", key, fn)
+        return fn
+    else:
+        print(f"Invalid selection. Please choose the {name} path.")
+        return None
+
+
 if __name__ == "__main__":
     # print(finder(folder=True, multiple=True, pattern=r'.bin$'))
-    print(file_reorder(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']))
+    # print(file_reorder(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']))
+    print(get_path("ks2", "Kilosort2"))

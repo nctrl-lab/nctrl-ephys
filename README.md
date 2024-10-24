@@ -25,15 +25,20 @@ pip install git+https://github.com/nctrl-lab/nctrl-ephys.git
 4. Run Kilosort (`ephys runks`)
     - Don't forget to switch the conda environment (`conda activate kilosort`) if the Kilosort is installed in a different environment.
     - If you would like to save metrics (L-ratio, isolation distance, waveform similarity, and overall scores), run `ephye runks --metric`.
+    - If you would like to run Kilosort2, run `ephye runks --ks2`.
 5. Run phy to curate the Kilosort results (`conda activate phy2`)
 6. Save the results (`ephys saveks`)
     - This will also extract sync and event times data from SpikeGLX files.
     - The final output will be a `.mat` file that includes the spike, sync, and event times (from the NIDQ file).
     - NIDQ time will be synced with the spike data.
+    - If you would like to save all the units, run `ephys saveks --all`.
+    - If you would like to save the good and mua units, run `ephys saveks --mua`.
+    - If you would like to save metrics, run `ephys saveks --metric`.
 7. Extract behavioral data from the VR log file (`ephys task`)
     - This will extract 'vr', 'trial', 'task_info', 'task_parameter', and 'monitor_info'.
     - The extracted data will be merged with the previous `.mat` file.
     - The final file will represent one behavioral session.
+    - For the avoidance task, run `ephys task --pi`.
 8. Load the data using `ephys.spike.Spike` class.
 
 ```python
