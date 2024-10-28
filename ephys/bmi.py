@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 import numpy as np
 import pandas as pd
+import hashlib
 import matplotlib.pyplot as plt
 import inquirer
 
@@ -137,7 +138,7 @@ class BMI:
 
         return data / (2 ** self.binary_radix) * self.uV_per_bit if scale else data
     
-    def save_mua(self, channel_idx=slice(0, 128), output_path=None):
+    def save_mua(self, channel_idx=slice(0, 128), right_shift=13, output_path=None):
         """
         Concatenate mua data to an int16 binary file.
 
@@ -159,15 +160,16 @@ class BMI:
           converted to int16.
         - The conversion process involves bit-shifting and scaling to preserve the 
           signal quality while reducing the file size.
-        - uV/bit will be 1.56 for Intan RHD2000 series (if the right_shift is 13 bits).
+        - uV/bit will be 1.56 for Intan RHD2000 series (if the right_shift is 16 bits and just used the upper 16 bits <- 0.195 uV/bit * 8).
         - Considering Neuropixels 2.0's uV/bit is 3.784 (12 bits, range -2048 to 2047, +/- 2**11), this scaling factor is reasonable.
+        - Neuropixels 1.0: 0.6V / 500 gain / 512 bits = 2.34 uV/bit
         """
         if self.mua_fn is None:
             raise ValueError("No MUA files found")
 
         if output_path is None:
             output_path = os.path.join(self.path, 'kilosort')
-            output_fn = os.path.join(output_path, f'{self.session_name}_tcat.bmi.ap.bin')
+            output_fn = os.path.join(output_path, f'{self.session_name}_tcat.imec.ap.bin')
             if not os.path.exists(output_path):
                 os.makedirs(output_path)
         self.output_path = output_path
@@ -181,7 +183,11 @@ class BMI:
         if hasattr(self, 'mua_fn') and len(self.mua_fn) > 1:
             self.mua_fn = inquirer.checkbox(message="Select files to merge (files are ordered by time)", choices=self.mua_fn, default=self.mua_fn)
         
-        self.mua_fn = file_reorder(self.mua_fn)
+        if not self.mua_fn:
+            return
+        
+        if len(self.mua_fn) > 1:
+            self.mua_fn = file_reorder(self.mua_fn)
 
         self.save_catgt()
         
@@ -203,10 +209,10 @@ class BMI:
                 # np.copyto(output_buffer, data[:, 2*self.channel_id_saved-1])
                 # output_buffer.tofile(f)
 
-                # 18.45 seconds preallocate (fastest but takes huge memory)
+                # 18.45 seconds preallocate (fastest but takes huge memory) 456.68 MB/s
                 data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], self.n_channel))
                 output_buffer = np.empty((self.n_sample[i], len(self.channel_id_saved)), dtype=np.int16)
-                np.right_shift(data[:, self.channel_id_saved], 13, out=output_buffer)
+                np.right_shift(data[:, self.channel_id_saved], right_shift, out=output_buffer)
                 output_buffer.tofile(f)
 
                 # 174.76 seconds
@@ -230,9 +236,9 @@ class BMI:
                 #         chunk.view(np.int16)[1::2].tofile(f)
 
 
-                # 151.59 seconds (super slow...)
-                # data = np.memmap(fn, dtype='int16', mode='r', shape=(self.n_sample[i], 2*self.n_channel))
-                # data[:, 1::2].tofile(f)
+                # 151.59 seconds 187.15 MB/s (super slow...)
+                # data = np.memmap(fn, dtype='int16', mode='r')
+                # data[1::2].tofile(f)
 
                 # 133.88 seconds memmap
                 # data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], self.n_channel))
@@ -255,23 +261,36 @@ class BMI:
         filetime_orig = datetime.fromtimestamp(os.path.getmtime(self.mua_fn[0])).strftime("%Y-%m-%dT%H:%M:%S")
         filetimesecs = n_sample / self.sample_rate
 
+        def calc_sha1(fn):
+            tprint(f"Calculating SHA1 for {fn}")
+            BUF_SIZE = 1024 * 1024  # Increase buffer size to 1MB for better throughput
+            
+            sha1_hash = hashlib.sha1()
+            with open(fn, 'rb') as f:
+                while chunk := f.read(BUF_SIZE):  # More concise loop using walrus operator
+                    sha1_hash.update(chunk)
+            return sha1_hash.hexdigest()
+
         metadata = {
-            "acqApLfSy": f"{self.n_channel_saved},0,0",
+            "acqApLfSy": "384,384,1",
+            "appVersion": "20240129",
             "fileCreateTime": filetime,
             "fileCreateTime_original": filetime_orig,
             "fileName": self.output_fn,
-            "fileSHA1": "0",
+            "fileSHA1": calc_sha1(fn),
             "fileSizeBytes": filesize,
             "fileTimeSecs": f"{filetimesecs:.3f}",
-            "firstSample": "0",
             "imAiRangeMax": "1.22683392",
             "imAiRangeMin": "-1.22683392",
             "imChan0apGain": "192",
-            "imMaxInt": str(2**15),
+            "imDatPrb_pn": "PRB_1_4_0480_1_C",
+            "imDatPrb_sn": "20097921810",
+            "imDatPrb_type": "0",
+            "imMaxInt": str(2**15), # But SpikeGLX seems to ignore this
             "imSampRate": self.sample_rate,
             "nSavedChans": self.n_channel_saved,
             "snsApLfSy": f"{self.n_channel_saved},0,0",
-            "snsSaveChanSubset": f"0:{self.n_channel_saved}",
+            "snsSaveChanSubset": f"0:{self.n_channel_saved - 1}",
             "typeThis": "imec",
             "~imroTbl": self.get_imrotbl(),
             "~snsChanMap": self.get_snschanmap(),
@@ -282,14 +301,15 @@ class BMI:
             for key, value in metadata.items():
                 f.write(f'{key}={value}\n')
 
+
     def get_imrotbl(self):
-        imrotbl = f"(0,{self.n_channel_saved})"
-        for channel, shank in enumerate(self.shank_saved):
-            imrotbl += f"({channel} {shank} 0 192 80 1)"
+        imrotbl = "(0,384)"
+        for channel in range(384):
+            imrotbl += f"({channel} 0 0 192 80 1)"
         return imrotbl
 
     def get_snschanmap(self):
-        snschanmap = f"({self.n_channel_saved},0,0)"
+        snschanmap = f"(384,384,1)"
         for i in range(self.n_channel_saved):
             snschanmap += f"(AP{i};{i}:{i})"
         return snschanmap
@@ -298,7 +318,7 @@ class BMI:
         # Note: x position will be set to 0 for all channels
         # To recontruct the x position, add the shank index * shank_spacing
         # We set the shank spacing to 1000 um.
-        snsgeommap = f"(FPGABMI,{np.unique(self.shank_saved).size},1000,70)"
+        snsgeommap = f"(PRB_1_4_0480_1_C,{np.unique(self.shank_saved).size},1000,70)"
         for i, (shank, position) in enumerate(zip(self.shank_saved, self.channel_position_saved)):
             snsgeommap += f"({shank}:0:{int(position[1])}:{int(not np.isnan(position[0]))})"
         return snsgeommap
@@ -497,10 +517,10 @@ class BMI:
 if __name__ == '__main__':
     bmi = BMI('C:\\SGL_DATA')
     # bmi.plot_prb()
-    # bmi.save_mua()
+    bmi.save_mua()
     # bmi.load_spk()
     # bmi.load_spk_wav()
     # bmi.load_fet()
     # bmi.load_nidq()
-    bmi.save_nidq()
+    # bmi.save_nidq()
     breakpoint()
