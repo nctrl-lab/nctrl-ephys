@@ -40,7 +40,7 @@ def finder(path: Optional[str] = None,
         root = tk.Tk()
         root.withdraw()
         root.call('wm', 'attributes', '.', '-topmost', True)
-        path = filedialog.askdirectory(title=f"Select a Directory to search for {pattern}")
+        path = filedialog.askdirectory(title=f"Select a Directory to search for {pattern}").replace('/', os.sep)
         root.destroy()
 
     files = [
