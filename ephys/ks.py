@@ -183,21 +183,20 @@ class Kilosort():
         
         if os.path.isfile(path):
             path = os.path.dirname(path)
+            self.path = path
 
         if not os.path.exists(path):
             raise ValueError(f"Path {path} does not exist")
         
         # look for current directory
+        self.data_file_path = None
         for _ in range(2):  # Check current and parent directory
             if any('ap.bin' in f for f in os.listdir(path)):
-                self.path = path
+                self.data_file_path = finder(path, 'ap.bin$', ask=False)[0]
                 break
             path = os.path.dirname(path)
         else:
             raise ValueError(f"No ap.bin file found in {path} or its parent directory")
-
-        if not os.path.isdir(self.path):
-            raise ValueError(f"Path {self.path} is not a valid directory")
 
         self.session = path.split(os.path.sep)[-2]
         self.sync = None
@@ -248,9 +247,6 @@ class Kilosort():
         Raises:
             ValueError: If the data file name does not match the original name and the user chooses not to continue.
         """
-        parent_folder = os.path.dirname(self.path)
-        self.data_file_path = finder(parent_folder, 'ap.bin$', ask=False)[0]
-
         self.meta = read_meta(self.data_file_path)
         self.n_channel = self.meta['snsApLfSy']['AP']
         self.uV_per_bit = get_uV_per_bit(self.meta)
