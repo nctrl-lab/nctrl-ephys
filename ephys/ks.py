@@ -178,17 +178,19 @@ class Kilosort():
         Raises:
             ValueError: If the specified path does not exist or is not a valid directory.
         """
+        # find params.py if no path provided
         if path is None:
             path = finder(None, 'params.py$')
-        
+
         if os.path.isfile(path):
             path = os.path.dirname(path)
-        self.path = path
 
         if not os.path.exists(path):
             raise ValueError(f"Path {path} does not exist")
+
+        self.path = path
         
-        # look for current directory
+        # look for ap.bin in the current directory or its parent directory
         self.data_file_path = None
         for _ in range(2):  # Check current and parent directory
             if any('ap.bin' in f for f in os.listdir(path)):
