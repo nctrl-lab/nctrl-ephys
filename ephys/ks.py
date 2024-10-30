@@ -183,7 +183,7 @@ class Kilosort():
         
         if os.path.isfile(path):
             path = os.path.dirname(path)
-            self.path = path
+        self.path = path
 
         if not os.path.exists(path):
             raise ValueError(f"Path {path} does not exist")
