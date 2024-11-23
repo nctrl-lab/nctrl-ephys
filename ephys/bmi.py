@@ -212,8 +212,17 @@ class BMI:
                 # 18.45 seconds preallocate (fastest but takes huge memory) 456.68 MB/s
                 data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], self.n_channel))
                 output_buffer = np.empty((self.n_sample[i], len(self.channel_id_saved)), dtype=np.int16)
-                np.right_shift(data[:, self.channel_id_saved], right_shift, out=output_buffer)
+                # np.right_shift(data[:, self.channel_id_saved], right_shift, out=output_buffer)
+                # Process data in chunks
+                chunk_size = 600000  # sampling rate = 25000 , 24 seconds
+                n_samples = data.shape[0]
+
+                for i in range(0, n_samples, chunk_size):
+                    end_idx = min(i + chunk_size, n_samples)
+                    chunk_data = data[i:end_idx, self.channel_id_saved]
+                    np.right_shift(chunk_data, right_shift, out=output_buffer[i:end_idx])
                 output_buffer.tofile(f)
+
 
                 # 174.76 seconds
                 # with open(fn, 'rb') as source_file:
