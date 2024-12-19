@@ -470,7 +470,10 @@ class BMI:
             if pulse_duration.min() < 0.090:
                 tprint(f"Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
             
-            sync_func = sync(self.time_sync_nidq[i], self.time_sync_fpga)
+            time_sync_fpga = np.add.outer(2048 * np.arange(np.ceil(len(self.time_Sync_nidq[i]) / len(self.time_sync_fpga)).astype(int)), 
+                         self.time_sync_fpga).ravel()[:len(self.time_Sync_nidq[i])]
+            
+            sync_func = sync(self.time_sync_nidq[i], time_sync_fpga)
             self.nidq[i]['time_fpga'] = sync_func(self.nidq[i]['time'])
         
     def save_nidq(self, path=None):
@@ -509,7 +512,10 @@ class BMI:
             if pulse_duration.min() < 0.090:
                 tprint(f"Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
             
-            sync_func = sync(self.time_sync_tdms[i], self.time_sync_fpga)
+            time_sync_fpga = np.add.outer(2048 * np.arange(np.ceil(len(self.time_sync_tdms[i]) / len(self.time_sync_fpga)).astype(int)), 
+                         self.time_sync_fpga).ravel()[:len(self.time_sync_tdms[i])]
+
+            sync_func = sync(self.time_sync_tdms[i], time_sync_fpga)
             self.tdms[i]['time_fpga'] = sync_func(self.tdms[i]['time'])
 
     def save_tdms(self, path=None):
