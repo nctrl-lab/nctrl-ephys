@@ -13,6 +13,42 @@ from .utils import finder, tprint, file_reorder, sync
 from .spikeglx import read_bin, read_digital
 from .tdms import read_tdms
 
+TIME_SYNC_FPGA = np.array([
+    0, 1, 3, 64, 105, 181, 266, 284, 382, 469, 531,
+    545, 551, 614, 712, 726, 810, 830, 846, 893, 983, 1024,
+    1113, 1196, 1214, 1242, 1257, 1285, 1379, 1477, 1537, 1567, 1634,
+    1697, 1718, 1744, 1749, 1811, 1862, 1917, 1995, 2047
+])  # in seconds
+
+def bmi_sync(time_sync_nidq, time_sync_fpga, eof_time=2048):
+    """
+    Repeat and match time sync (FPGA) values to NIDQ or TDMS length.
+
+    Parameters:
+    ----------
+    time_sync_nidq : np.array
+        Time sync values from NIDQ/TDMS.
+    time_sync_fpga : np.array
+        Base FPGA sync values.
+    eof_time : int, optional
+        End of time for one FPGA cycle, by default 2048.
+
+    Returns:
+    -------
+    sync_func : callable
+        Function to map time_sync_nidq to extended FPGA sync times.
+    """
+    n_nidq = len(time_sync_nidq)
+    n_fpga = len(time_sync_fpga)
+
+    # Calculate offsets and repeat FPGA sync times to match NIDQ length
+    offsets = eof_time * np.arange(int(np.ceil(n_nidq / n_fpga)))
+    extended_fpga = (time_sync_fpga + offsets[:, None]).ravel()[:n_nidq]
+
+    # Return the synchronization function
+    return sync(time_sync_nidq, extended_fpga)
+
+
 class BMI:
     def __init__(self, path=None, pattern=r'\.prb$'):
         """
@@ -32,10 +68,10 @@ class BMI:
         
         - These files are going to be ordered by the time of the file creation.
         """
-        self.time_sync_fpga = np.array([0, 1, 3, 64, 105, 181, 266, 284, 382, 469, 531,
-            545, 551, 614, 712, 726, 810, 830, 846, 893, 983, 1024,
-            1113, 1196, 1214, 1242, 1257, 1285, 1379, 1477, 1537, 1567, 1634,
-            1697, 1718, 1744, 1749, 1811, 1862, 1917, 1995, 2047])  # in seconds
+        # self.time_sync_fpga = np.array([0, 1, 3, 64, 105, 181, 266, 284, 382, 469, 531,
+        #     545, 551, 614, 712, 726, 810, 830, 846, 893, 983, 1024,
+        #     1113, 1196, 1214, 1242, 1257, 1285, 1379, 1477, 1537, 1567, 1634,
+        #     1697, 1718, 1744, 1749, 1811, 1862, 1917, 1995, 2047])  # in seconds
         self.n_channel = 160
         self.sample_rate = 25000.0
         self.binary_radix = 13
@@ -469,11 +505,8 @@ class BMI:
             pulse_duration = time_sync_nidq_off - self.time_sync_nidq[i]
             if pulse_duration.min() < 0.090:
                 tprint(f"Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
-            
-            time_sync_fpga = np.add.outer(2048 * np.arange(np.ceil(len(self.time_Sync_nidq[i]) / len(self.time_sync_fpga)).astype(int)), 
-                         self.time_sync_fpga).ravel()[:len(self.time_Sync_nidq[i])]
-            
-            sync_func = sync(self.time_sync_nidq[i], time_sync_fpga)
+
+            sync_func = bmi_sync(self.time_sync_nidq[i], TIME_SYNC_FPGA)
             self.nidq[i]['time_fpga'] = sync_func(self.nidq[i]['time'])
         
     def save_nidq(self, path=None):
@@ -511,11 +544,8 @@ class BMI:
             pulse_duration = time_sync_tdms_off - self.time_sync_tdms[i]
             if pulse_duration.min() < 0.090:
                 tprint(f"Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
-            
-            time_sync_fpga = np.add.outer(2048 * np.arange(np.ceil(len(self.time_sync_tdms[i]) / len(self.time_sync_fpga)).astype(int)), 
-                         self.time_sync_fpga).ravel()[:len(self.time_sync_tdms[i])]
 
-            sync_func = sync(self.time_sync_tdms[i], time_sync_fpga)
+            sync_func = bmi_sync(self.time_sync_tdms[i], TIME_SYNC_FPGA)
             self.tdms[i]['time_fpga'] = sync_func(self.tdms[i]['time'])
 
     def save_tdms(self, path=None):
