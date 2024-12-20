@@ -20,7 +20,7 @@ TIME_SYNC_FPGA = np.array([
     1697, 1718, 1744, 1749, 1811, 1862, 1917, 1995, 2047
 ])  # in seconds
 
-def bmi_sync(time_sync_nidq, time_sync_fpga, eof_time=2048):
+def bmi_sync(time_sync_nidq, eof_time=2048):
     """
     Repeat and match time sync (FPGA) values to NIDQ or TDMS length.
 
@@ -39,14 +39,14 @@ def bmi_sync(time_sync_nidq, time_sync_fpga, eof_time=2048):
         Function to map time_sync_nidq to extended FPGA sync times.
     """
     n_nidq = len(time_sync_nidq)
-    n_fpga = len(time_sync_fpga)
+    n_fpga = len(TIME_SYNC_FPGA)
 
     # Calculate offsets and repeat FPGA sync times to match NIDQ length
     offsets = eof_time * np.arange(int(np.ceil(n_nidq / n_fpga)))
-    extended_fpga = (time_sync_fpga + offsets[:, None]).ravel()[:n_nidq]
+    time_sync_fpga = (TIME_SYNC_FPGA + offsets[:, None]).ravel()[:n_nidq]
 
     # Return the synchronization function
-    return sync(time_sync_nidq, extended_fpga)
+    return sync(time_sync_nidq, time_sync_fpga)
 
 
 class BMI:
@@ -68,10 +68,6 @@ class BMI:
         
         - These files are going to be ordered by the time of the file creation.
         """
-        # self.time_sync_fpga = np.array([0, 1, 3, 64, 105, 181, 266, 284, 382, 469, 531,
-        #     545, 551, 614, 712, 726, 810, 830, 846, 893, 983, 1024,
-        #     1113, 1196, 1214, 1242, 1257, 1285, 1379, 1477, 1537, 1567, 1634,
-        #     1697, 1718, 1744, 1749, 1811, 1862, 1917, 1995, 2047])  # in seconds
         self.n_channel = 160
         self.sample_rate = 25000.0
         self.binary_radix = 13
@@ -239,18 +235,9 @@ class BMI:
                 tprint(f"Processing {fn}")
                 start_time = time.time()
 
-                # 16.20 seconds preallocate (fastest but takes huge memory)
-                # data = np.memmap(fn, dtype='int16', mode='r', shape=(self.n_sample[i], 2*self.n_channel))
-                # output_buffer = np.empty((self.n_sample[i], len(self.channel_id_saved)), dtype=np.int16)
-                # np.copyto(output_buffer, data[:, 2*self.channel_id_saved-1])
-                # output_buffer.tofile(f)
-
-                # 18.45 seconds preallocate (fastest but takes huge memory) 456.68 MB/s
                 data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], self.n_channel))
                 output_buffer = np.empty((self.n_sample[i], len(self.channel_id_saved)), dtype=np.int16)
-                # np.right_shift(data[:, self.channel_id_saved], right_shift, out=output_buffer)
-                # Process data in chunks
-                chunk_size = 600000  # sampling rate = 25000 , 24 seconds
+                chunk_size = 25000 * 60  # sampling rate 25000 Hz, 60 seconds
                 n_samples = data.shape[0]
 
                 for i in range(0, n_samples, chunk_size):
@@ -258,37 +245,6 @@ class BMI:
                     chunk_data = data[i:end_idx, self.channel_id_saved]
                     np.right_shift(chunk_data, right_shift, out=output_buffer[i:end_idx])
                 output_buffer.tofile(f)
-
-
-                # 174.76 seconds
-                # with open(fn, 'rb') as source_file:
-                #     chunk_size = 160 * 1024 * 1024  # 160 MB chunks (160M * 4 bytes for int32)
-                #     while True:
-                #         chunk = np.fromfile(source_file, dtype='int32', count=chunk_size)
-                #         if chunk.size == 0:
-                #             break
-                #         chunk = chunk.reshape(-1, self.n_channel)[:, self.channel_id_saved]
-                #         chunk = np.right_shift(chunk, 13).astype(np.int16)
-                #         chunk.tofile(f)
-
-                # 140.90 seconds
-                # with open(fn, 'rb') as source_file:
-                #     chunk_size = 160 * 1024 * 1024  # 160 MB chunks
-                #     while True:
-                #         chunk = np.fromfile(source_file, dtype='int32', count=chunk_size)
-                #         if chunk.size == 0:
-                #             break
-                #         chunk.view(np.int16)[1::2].tofile(f)
-
-
-                # 151.59 seconds 187.15 MB/s (super slow...)
-                # data = np.memmap(fn, dtype='int16', mode='r')
-                # data[1::2].tofile(f)
-
-                # 133.88 seconds memmap
-                # data = np.memmap(fn, dtype='int32', mode='r', shape=(self.n_sample[i], self.n_channel))
-                # np.right_shift(data[:, self.channel_id_saved], 13).astype(np.int16).tofile(f)
-                # del data  # Close the memmap
 
                 end_time = time.time()
                 duration = end_time - start_time
@@ -506,7 +462,7 @@ class BMI:
             if pulse_duration.min() < 0.090:
                 tprint(f"Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
 
-            sync_func = bmi_sync(self.time_sync_nidq[i], TIME_SYNC_FPGA)
+            sync_func = bmi_sync(self.time_sync_nidq[i])
             self.nidq[i]['time_fpga'] = sync_func(self.nidq[i]['time'])
         
     def save_nidq(self, path=None):
@@ -545,7 +501,7 @@ class BMI:
             if pulse_duration.min() < 0.090:
                 tprint(f"Found sync pulse shorter than 90 ms: {pulse_duration.min()}")
 
-            sync_func = bmi_sync(self.time_sync_tdms[i], TIME_SYNC_FPGA)
+            sync_func = bmi_sync(self.time_sync_tdms[i])
             self.tdms[i]['time_fpga'] = sync_func(self.tdms[i]['time'])
 
     def save_tdms(self, path=None):
