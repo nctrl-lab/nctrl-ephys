@@ -77,6 +77,7 @@ def saveks(path, metric, bmi, all, mua):
     if not bmi:
         ks.load_sync()
         ks.load_nidq()
+        ks.load_obx()
     
     if metric:
         ks.save_metrics()

@@ -151,7 +151,7 @@ def read_digital(filename, dtype='uint16'):
     # Read the meta data
     meta = read_meta(meta_fn)
     n_channel = meta['nSavedChans']
-    sample_rate = meta.get('imSampRate') or meta.get('niSampRate')
+    sample_rate = meta.get('imSampRate') or meta.get('niSampRate') or meta.get('obSampRate')
     channel_idx = get_channel_idx(meta, analog=False)
 
     # Read the digital data
@@ -273,6 +273,13 @@ def read_meta(filename):
                     'LF': values[1],
                     'SY': values[2]
                 }
+            elif key in ['acqXaDwSy', 'snsXaDwSy']:
+                values = list(map(int, value.split(',')))
+                meta[key] = {
+                    'XA': values[0],
+                    'DW': values[1],
+                    'SY': values[2]
+                }
             else:
                 # Try to convert to int or float
                 try:
@@ -363,7 +370,7 @@ def parse_snschanmap(value):
     
     # Parse channel map
     channel_map = []
-    channel_pattern = r'\(([^;]+);(\d+):(\d+)\)'
+    channel_pattern = r'\(([A-Za-z]+\d+);(\d+):(\d+)\)'
     for match in re.finditer(channel_pattern, value):
         channel_map.append({
             'name': match.group(1),
@@ -469,13 +476,21 @@ def get_gain(meta):
         gains[n_mn:n_mn + n_ma] = meta['niMAGain']
         return gains
     
+    elif meta['typeThis'] == 'obx':
+        if 'snsXaDwSy' not in meta:
+            raise ValueError("Missing 'snsXaDwSy' in metadata for obx recording")
+        n_xa = meta['snsXaDwSy']['XA']
+        n_dw = meta['snsXaDwSy']['DW']
+        n_sy = meta['snsXaDwSy']['SY']
+        gains = np.ones(n_xa + n_dw + n_sy)
+        return gains
     else:
         raise ValueError(f"Unrecognized recording type: {meta['typeThis']}")
 
 
 def get_uV_per_bit(meta):
-    AiRangeMax = meta.get('imAiRangeMax') or meta.get('niAiRangeMax')
-    MaxInt = meta.get('imMaxInt') or meta.get('niMaxInt') or 512
+    AiRangeMax = meta.get('imAiRangeMax') or meta.get('niAiRangeMax') or meta.get('obAiRangeMax')
+    MaxInt = meta.get('imMaxInt') or meta.get('niMaxInt') or meta.get('obMaxInt') or 512
     gains = get_gain(meta)
     return 1000000 * AiRangeMax / MaxInt / gains
 
@@ -518,6 +533,14 @@ def get_channel_idx(meta, analog=True):
             channel_idx = slice(0, n_mn + n_ma + n_xa)
         else:
             channel_idx = slice(n_mn + n_ma + n_xa, n_mn + n_ma + n_xa + n_dw)
+    elif meta['typeThis'] == 'obx':
+        n_xa = meta['snsXaDwSy']['XA']
+        n_dw = meta['snsXaDwSy']['DW']
+        n_sy = meta['snsXaDwSy']['SY']
+        if analog:
+            channel_idx = slice(0, n_xa)
+        else:
+            channel_idx = slice(n_xa, n_xa + n_dw + n_sy)
     else:
         raise ValueError(f"Unrecognized recording type: {meta['typeThis']}")
     

@@ -752,6 +752,59 @@ class Kilosort():
         
         self.nidq['time_imec'] = sync(self.sync['time_nidq'], self.sync['time_imec'])(self.nidq['time'])
 
+    def load_obx(self, path=None, analog_threshold=2.8):
+        """
+        Load OneBox (OBX) data.
+
+        This method reads digital data from the OBX file, processes it, and stores
+        the results in the 'nidq' and 'sync' attributes.
+
+        Args:
+            path (str, optional): Path to the OBX file. If not provided, the method
+                                  attempts to find the file automatically.
+
+        Returns:
+            None
+
+        Side effects:
+            - Updates self.obx with OBX data
+            - Updates self.sync with synchronization data from OBX
+            - Calculates and stores IMEC time for OBX data
+        """
+        obx_fn = path if path and os.path.isfile(path) else finder(os.path.dirname(os.path.dirname(self.data_file_path)), 'obx.bin$') or finder(pattern='obx.bin$')
+        
+        if not obx_fn:
+            tprint("Could not find a OBX file")
+            return
+
+        tprint(f"Loading obx data from {obx_fn}")
+        meta_obx = read_meta(obx_fn)
+        sample_rate = meta_obx['obSampRate']
+        data_obx = read_analog(obx_fn) > analog_threshold * 1e6
+
+        changes = np.where(np.diff(data_obx, axis=0) != 0)
+        timestamps = changes[0] + 1
+        event_id = changes[1]
+        event_type = data_obx[changes[0] + 1, changes[1]]
+
+        self.obx = pd.DataFrame({
+            'time': timestamps / sample_rate,
+            'frame': timestamps,
+            'chan': event_id,
+            'type': event_type
+        })
+
+        sync_obx = read_digital(obx_fn)
+        df_sync = sync_obx[(sync_obx['chan'] == 22) & (sync_obx['type'] == 1)]
+        data_sync = {f'{key}_obx': df_sync[key].values for key in ['time', 'frame', 'type']}
+
+        if self.sync is None:
+            self.sync = data_sync
+        else:
+            self.sync.update(data_sync)
+        
+        self.obx['time_imec'] = sync(self.sync['time_obx'], self.sync['time_imec'])(self.obx['time'])
+
     def save(self, path=None):
         """
         Save Kilosort data to a MATLAB file.
