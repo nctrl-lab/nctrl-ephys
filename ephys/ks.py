@@ -795,7 +795,8 @@ class Kilosort():
         })
 
         sync_obx = read_digital(obx_fn)
-        df_sync = sync_obx[(sync_obx['chan'] == 22) & (sync_obx['type'] == 1)]
+        sync_channel = 6 if meta_obx['acqXaDwSy']['DW'] == 0 else 22
+        df_sync = sync_obx[(sync_obx['chan'] == sync_channel) & (sync_obx['type'] == 1)]
         data_sync = {f'{key}_obx': df_sync[key].values for key in ['time', 'frame', 'type']}
 
         if self.sync is None:
