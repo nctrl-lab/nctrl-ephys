@@ -778,6 +778,7 @@ class Kilosort():
 
         # load digital data
         digital_obx = read_digital(obx_fn)
+        meta_obx = read_meta(obx_fn)
         sync_channel = 6 if meta_obx['acqXaDwSy']['DW'] == 0 else 22
         df_sync = digital_obx[(digital_obx['chan'] == sync_channel) & (digital_obx['type'] == 1)]
         data_sync = {f'{key}_obx': df_sync[key].values for key in ['time', 'frame', 'type']}
@@ -796,7 +797,6 @@ class Kilosort():
             event_id = changes[1]
             event_type = data_obx[changes[0] + 1, changes[1]]
 
-            meta_obx = read_meta(obx_fn)
 
             self.obx = pd.DataFrame({
                 'time': timestamps / meta_obx['obSampRate'],
