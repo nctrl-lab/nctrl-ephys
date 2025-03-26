@@ -797,7 +797,6 @@ class Kilosort():
             event_id = changes[1]
             event_type = data_obx[changes[0] + 1, changes[1]]
 
-
             self.obx = pd.DataFrame({
                 'time': timestamps / meta_obx['obSampRate'],
                 'frame': timestamps,
@@ -868,7 +867,7 @@ class Kilosort():
             data['sync'] = self.sync
         if self.nidq:
             data['nidq'] = self.nidq
-        if self.obx:
+        if hasattr(self, 'obx'):
             data['obx'] = self.obx
 
         fn = os.path.join(path, f'{self.session}_data.mat')
