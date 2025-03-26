@@ -868,6 +868,8 @@ class Kilosort():
             data['sync'] = self.sync
         if self.nidq:
             data['nidq'] = self.nidq
+        if self.obx:
+            data['obx'] = self.obx
 
         fn = os.path.join(path, f'{self.session}_data.mat')
         tprint(f"Saving Kilosort data to {fn}")
