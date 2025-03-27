@@ -214,6 +214,8 @@ def read_digital_chunked(filename, dtype='uint16', chunk_samples=1_000_000):
     n_channels = meta['nSavedChans']
     sample_rate = 62500  # explicitly given
     channel_idx = get_channel_idx(meta, analog=False)
+    if isinstance(channel_idx, slice):
+        channel_idx = list(range(channel_idx.start or 0, channel_idx.stop, channel_idx.step or 1))
     dtype_np = np.dtype(dtype)
 
     # Memory map the entire binary file
