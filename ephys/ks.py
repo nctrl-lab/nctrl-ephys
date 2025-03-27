@@ -5,7 +5,7 @@ import subprocess
 from sklearn.decomposition import PCA
 from yaml import load_all
 
-from .spikeglx import read_meta, read_analog, read_digital, get_uV_per_bit, get_channel_idx
+from .spikeglx import read_meta, read_analog, read_digital_chunked, get_uV_per_bit, get_channel_idx
 from .utils import finder, confirm, savemat_safe, tprint, sync, get_file
 
 from .metrics import calculate_metrics, DEFAULT_PARAMS, DEFAULT_WAVEFORMS
