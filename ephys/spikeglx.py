@@ -230,6 +230,7 @@ def read_digital_chunked(filename, dtype='uint16', chunk_samples=1_000_000):
     for start in range(0, total_samples, chunk_samples):
         end = min(start + chunk_samples, total_samples)
         chunk = data[start:end, channel_idx]
+        chunk = np.ascontiguousarray(chunk)
 
         # Unpack bits
         bits = np.unpackbits(chunk.view('uint8'), bitorder='little')

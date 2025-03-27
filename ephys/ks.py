@@ -737,7 +737,7 @@ class Kilosort():
             return
 
         tprint(f"Loading nidq data from {nidq_fn}")
-        data_nidq = read_digital(nidq_fn)
+        data_nidq = read_digital_chunked(nidq_fn)
         
         df_nidq = data_nidq[data_nidq['chan'] > 0]
         df_sync = data_nidq[(data_nidq['chan'] == 0) & (data_nidq['type'] == 1)]
@@ -777,7 +777,7 @@ class Kilosort():
         tprint(f"Loading obx data from {obx_fn}")
 
         # load digital data
-        digital_obx = read_digital(obx_fn)
+        digital_obx = read_digital_chunked(obx_fn)
         meta_obx = read_meta(obx_fn)
         sync_channel = 6 if meta_obx['acqXaDwSy']['DW'] == 0 else 22
         df_sync = digital_obx[(digital_obx['chan'] == sync_channel) & (digital_obx['type'] == 1)]
