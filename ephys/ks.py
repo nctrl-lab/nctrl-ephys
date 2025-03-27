@@ -777,8 +777,11 @@ class Kilosort():
         tprint(f"Loading obx data from {obx_fn}")
 
         # load digital data
-        digital_obx = read_digital(obx_fn)
         meta_obx = read_meta(obx_fn)
+        if meta_obx['acqXaDwSy']['DW'] == 0:
+            use_digital = False
+
+        digital_obx = read_digital(obx_fn)
         sync_channel = 6 if meta_obx['acqXaDwSy']['DW'] == 0 else 22
         df_sync = digital_obx[(digital_obx['chan'] == sync_channel) & (digital_obx['type'] == 1)]
         data_sync = {f'{key}_obx': df_sync[key].values for key in ['time', 'frame', 'type']}
