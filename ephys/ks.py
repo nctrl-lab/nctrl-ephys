@@ -699,7 +699,7 @@ class Kilosort():
             return
 
         tprint(f"Loading sync from {self.data_file_path}")
-        data_sync = read_digital(self.data_file_path).query('chan == 6 and type == 1')
+        data_sync = read_digital_chunked(self.data_file_path).query('chan == 6 and type == 1')
         sync = {
             'time_imec': data_sync['time'].values,
             'frame_imec': data_sync['frame'].values,
