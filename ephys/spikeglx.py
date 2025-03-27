@@ -173,6 +173,89 @@ def read_digital(filename, dtype='uint16'):
 
     return events
 
+import os
+import numpy as np
+import pandas as pd
+
+def read_digital_chunked(filename, dtype='uint16', chunk_samples=1_000_000):
+    """
+    Memory-efficient version of read_digital() using chunked reading and processing.
+    
+    Parameters:
+    -----------
+    filename : str
+        Path to the meta or binary file.
+    dtype : str, optional
+        Data type of the binary file (default is 'uint16').
+    chunk_samples : int
+        Number of samples per chunk (default: 1 million).
+
+    Returns:
+    --------
+    pd.DataFrame
+        Event data with columns: ['time', 'frame', 'chan', 'type']
+    """
+    if filename.endswith('.meta'):
+        bin_fn = filename.replace('.meta', '.bin')
+        meta_fn = filename
+    elif filename.endswith('.bin'):
+        bin_fn = filename
+        meta_fn = filename.replace('.bin', '.meta')
+    else:
+        raise ValueError("Filename must end with either '.meta' or '.bin'")
+
+    if not os.path.exists(bin_fn):
+        raise FileNotFoundError(f"Binary file not found: {bin_fn}")
+    if not os.path.exists(meta_fn):
+        raise FileNotFoundError(f"Meta file not found: {meta_fn}")
+
+    # Load meta info
+    meta = read_meta(meta_fn)
+    n_channels = meta['nSavedChans']
+    sample_rate = 62500  # explicitly given
+    channel_idx = get_channel_idx(meta, analog=False)
+    dtype_np = np.dtype(dtype)
+
+    # Memory map the entire binary file
+    total_samples = os.path.getsize(bin_fn) // (dtype_np.itemsize * n_channels)
+    data = np.memmap(bin_fn, dtype=dtype_np, mode='r').reshape(-1, n_channels)
+
+    digital_bits_per_sample = dtype_np.itemsize * 8 * len(channel_idx)
+    events = []
+    prev_bits = None
+    frame_offset = 0
+
+    for start in range(0, total_samples, chunk_samples):
+        end = min(start + chunk_samples, total_samples)
+        chunk = data[start:end, channel_idx]
+
+        # Unpack bits
+        bits = np.unpackbits(chunk.view('uint8'), bitorder='little')
+        bits = bits.reshape(-1, digital_bits_per_sample)
+
+        if prev_bits is not None:
+            bits = np.vstack([prev_bits, bits])
+
+        diffs = np.diff(bits, axis=0)
+        change_idx, chan_idx = np.where(diffs != 0)
+
+        # Compute onset/offset
+        timestamps = change_idx + 1 + frame_offset - (1 if prev_bits is not None else 0)
+        event_type = bits[change_idx + 1, chan_idx]  # 0: offset, 1: onset
+
+        df = pd.DataFrame({
+            'time': timestamps / sample_rate,
+            'frame': timestamps,
+            'chan': chan_idx,
+            'type': event_type
+        })
+        events.append(df)
+
+        # Save last row to use as prev_bits for next chunk
+        prev_bits = bits[-1:, :]
+        frame_offset += (end - start)
+
+    return pd.concat(events, ignore_index=True)
 
 def read_bin(filename: str, n_channel: int = 385, dtype: str = 'int16',
              channel_idx: Optional[Union[slice, np.ndarray]] = None,
