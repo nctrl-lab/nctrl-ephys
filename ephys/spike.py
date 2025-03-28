@@ -154,7 +154,7 @@ class Spike:
         """Convert probe positions to atlas coordinates"""
         shape_um = self.atlas.shape_um
         resolution = np.array(self.atlas.resolution)
-        coords = np.column_stack((position, np.zeros(len(position)))) + self.origin
+        coords = np.column_stack((position * np.array([1, -1]), np.zeros(len(position)))) + self.origin
         return np.clip(coords, 0, shape_um - resolution)
 
     def load_channel_position(self):
@@ -165,7 +165,7 @@ class Spike:
             return
 
         df = pd.DataFrame(electrodes)
-        self.channel_position = (df[['x', 'z']].values * np.array([1, -1])).copy()
+        self.channel_position = df[['x', 'z']].values.copy()
         self.channel_coords = self._position_to_coords(self.channel_position)
         self.channel_region = [self.atlas.structure_from_coords(c, microns=True, as_acronym=True) 
                              for c in self.channel_coords]
@@ -173,7 +173,7 @@ class Spike:
     def load_unit_position(self):
         """Load unit locations"""
         tprint("Loading unit locations")
-        self.unit_position = self.spike['waveform_position'][:, 0, :] * np.array([1, -1])
+        self.unit_position = self.spike['waveform_position'][:, 0, :]
         self.unit_coords = self._position_to_coords(self.unit_position)
         self.unit_region = [self.atlas.structure_from_coords(c, microns=True, as_acronym=True)
                           for c in self.unit_coords]
@@ -186,8 +186,24 @@ class Spike:
         """Plot brain with channel and unit positions"""
         from brainrender.actors import Points, Line
         self.scene.add(Points(self.channel_coords, colors="yellow", alpha=0.2))
-        self.scene.add(Points(self.unit_coords, colors="red", alpha=0.5))
+        self.scene.add(Points(self.unit_coords, colors="red", alpha=0.5, radius=50))
         self.scene.render()
+    
+    def plot_probe(self):
+        """Plot probe and unit location"""
+        unit_position = self.spike['waveform_position'][:, 0, :]
+        channel_position = self.spike['channel_position']
+        
+        plt.figure(figsize=(4, 10))
+        plt.scatter(channel_position[:, 0], channel_position[:, 1], s=12, c="gray", marker='s', alpha=0.2)
+        plt.scatter(unit_position[:, 0], unit_position[:, 1], s=20, c="red", marker='o', alpha=0.5)
+        
+        range_min = channel_position.min(axis=0)
+        range_max = channel_position.max(axis=0)
+        plt.xlim(range_min[0] - 24, range_max[0] + 24)
+        plt.ylim(range_min[1] - 24, range_max[1] + 24)
+        
+        plt.show()
 
     def plot(self, event=None):
         import tkinter as tk
