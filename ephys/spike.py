@@ -10,19 +10,36 @@ from .utils import tprint, finder
 
 
 class Spike:
-    def __init__(self, path):
+    def __init__(self, path, coord=None):
+        """
+        Initialize the Spike object.
+
+        Parameters:
+        -----------
+        path : str
+            The path to the spike file.
+        coord : list or numpy array, optional (default: None)
+            The coordinates of the probe in the brain from bregma in mm.
+            * (AP, DV, ML)
+            * AP: anterior-posterior from the bregma in mm (positive: anterior)
+            * DV: dorsal-ventral from the pial surface in mm (positive: ventral)
+            * ML: medial-lateral from the bregma in mm (positive: right)
+        """
         self.path = path
 
         tprint(f"Loading {self.path}")
-        temp = loadmat(path, simplify_cells=True)
-        data = {}
-        for key, value in temp.items():
-            if not key.startswith('__'):
-                try:
-                    data[key.lower()] = pd.DataFrame(value)
-                except:
-                    data[key.lower()] = value
+        data = {k.lower(): pd.DataFrame(v) if isinstance(v, (list, np.ndarray)) else v 
+               for k, v in loadmat(path, simplify_cells=True).items() 
+               if not k.startswith('__')}
         self.__dict__.update(data)
+
+        if coord is not None:
+            if len(coord) != 3:
+                raise ValueError("coord must be a list or numpy array with 3 elements")
+            self.coord = np.array(coord)
+            self.load_atlas()
+            self.load_channel_position()
+            self.load_unit_position()
     
     def __repr__(self):
         """
@@ -102,6 +119,75 @@ class Spike:
                 time_nidq[f'{chan}_{type}'] = temp['time_imec'].values
         
         return time_nidq
+
+    def load_atlas(self):
+        """Load brain atlas and initialize scene"""
+        tprint("Loading brain atlas")
+        import vedo
+        vedo.settings.default_backend = 'vtk'
+
+        from brainrender import Scene
+
+        self.scene = Scene()
+        self.atlas = self.scene.atlas
+        self.origin = self.coord_to_origin()
+    
+    def coord_to_origin(self):
+        """Convert coordinates in mm to indices."""
+        # Constants
+        BREGMA = np.array([5400, 0, 5700]) # in um
+        SCALING = np.array([-1000, 1000, -1000])
+
+        # Convert to atlas space
+        coord_surface_to_tip = self.coord * SCALING + BREGMA
+        tip_length_um = self.spike.get('meta', {}).get('imTipLength', 0)
+        coord_surface_to_electrode = coord_surface_to_tip + np.array([0, -tip_length_um, 0])
+
+        # Get indices
+        resolution = np.array(self.atlas.resolution)
+        idx = np.round(coord_surface_to_electrode / resolution).astype(int)
+        surface = np.where(self.atlas.annotation[idx[0], :, idx[2]] != 0)[0][0]
+
+        return coord_surface_to_electrode + np.array([0, surface, 0]) * resolution
+    
+    def _position_to_coords(self, position):
+        """Convert probe positions to atlas coordinates"""
+        shape_um = self.atlas.shape_um
+        resolution = np.array(self.atlas.resolution)
+        coords = np.column_stack((position, np.zeros(len(position)))) + self.origin
+        return np.clip(coords, 0, shape_um - resolution)
+
+    def load_channel_position(self):
+        """Load channel locations"""
+        tprint("Loading channel locations")
+        electrodes = self.spike.get('meta', {}).get('snsGeomMap', {}).get('electrodes')
+        if not electrodes:
+            return
+
+        df = pd.DataFrame(electrodes)
+        self.channel_position = (df[['x', 'z']].values * np.array([1, -1])).copy()
+        self.channel_coords = self._position_to_coords(self.channel_position)
+        self.channel_region = [self.atlas.structure_from_coords(c, microns=True, as_acronym=True) 
+                             for c in self.channel_coords]
+    
+    def load_unit_position(self):
+        """Load unit locations"""
+        tprint("Loading unit locations")
+        self.unit_position = self.spike['waveform_position'][:, 0, :] * np.array([1, -1])
+        self.unit_coords = self._position_to_coords(self.unit_position)
+        self.unit_region = [self.atlas.structure_from_coords(c, microns=True, as_acronym=True)
+                          for c in self.unit_coords]
+    
+    def add_region(self, region, alpha=0.2, hemisphere="both"):
+        """Add brain region"""
+        self.scene.add_brain_region(region, alpha=alpha, hemisphere=hemisphere)
+    
+    def plot_brain(self):
+        """Plot brain with channel and unit positions"""
+        from brainrender.actors import Points, Line
+        self.scene.add(Points(self.channel_coords, colors="yellow", alpha=0.2))
+        self.scene.add(Points(self.unit_coords, colors="red", alpha=0.5))
+        self.scene.render()
 
     def plot(self, event=None):
         import tkinter as tk
@@ -457,14 +543,17 @@ def get_latency(spike, event_onset, event_offset, duration=0.08, offset=0.3):
 
 
 if __name__ == '__main__':
-    path = finder(path="C:\\SGL_DATA", msg='Select a session file', pattern=r'.mat$')
-    spike = Spike(path)
+    path = finder(path=r"Z:\bangy\nogo_go\data_ephys\A16", msg='Select a session file', pattern=r'.mat$')
+    spike = Spike(path, [-3.2, 5.5, -0.6])
+    spike.add_region('VTA', hemisphere='left')
+    spike.plot_brain()
+    print(spike.unit_region)
 
     # # interactive plot
     # spike.plot()
 
     # plot raster and psth
-    time_event = spike.nidq.query('chan == 5 and type == 1')['time_imec'].values
-    plot_tagging(spike.spike['time'], time_event)
-    plt.show()
+    # time_event = spike.nidq.query('chan == 5 and type == 1')['time_imec'].values
+    # plot_tagging(spike.spike['time'], time_event)
+    # plt.show()
     breakpoint()

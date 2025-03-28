@@ -17,7 +17,9 @@ dependencies = [
     "prompt_toolkit >=3",
     "inquirer",
     "click",
-    "npTDMS"
+    "npTDMS",
+    "brainrender",
+    "h5py >= 3.13"
 ]
 dynamic = ["version"]
 [tool.setuptools_scm]
