@@ -40,6 +40,14 @@ pip install git+https://github.com/nctrl-lab/nctrl-ephys.git
     - The final file will represent one behavioral session.
     - For the avoidance task, run `ephys task --pi`.
 8. Load the data using `ephys.spike.Spike` class.
+    - If you provide electrode location, the module will calculate approximate location of cells and probe channels.
+    - `spike = Spike(path, coord=[2.0, 4.0, 0.5])` if you inserted the probe at 2.0 mm AP (anterior is positive), 0.5 mm ML (right is positive) from bregma, and 4.0 mm DV (ventral is positive) from pial surface.
+        - spike.Spike.channel_position: channel location on the probe (left-lower is the origin)
+        - spike.Spike.channel_region: region acronym on the Allen brain atlas
+        - spike.Spike.unit_position: unit location on the probe
+        - spike.Spike.unit_region: region acronym for each unit
+        - spike.Spike.add_region(region_acronym='PL'): draws brain region on the brain atlas
+        - spike.Spike.plot_brain(): renders brain atlas including channel and unit location
 
 ```python
 from ephys.spike import Spike
