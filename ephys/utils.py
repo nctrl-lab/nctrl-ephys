@@ -206,7 +206,7 @@ def savemat_safe(fn, data):
             sio.savemat(fn, data_old, oned_as='column')
 
 
-def sync(time_a, time_b):
+def sync(time_a, time_b, threshold=0.010):
     """
     Synchronize two time series by finding a linear relationship between them.
 
@@ -216,6 +216,8 @@ def sync(time_a, time_b):
         First time series.
     time_b : array-like
         Second time series to synchronize with the first.
+    threshold : float, optional
+        Threshold for removing outliers. Defaults to 10 ms.
 
     Returns:
     --------
@@ -225,47 +227,70 @@ def sync(time_a, time_b):
     Notes:
     ------
     This function performs the following steps:
-    1. Checks if the input time series have the same length.
+    1. Finds the closest matching points between the two time series.
     2. Performs a linear regression to check if the relationship is linear.
-    3. Removes outliers that deviate more than 2 ms from the linear fit.
+    3. Removes outliers that deviate more than threshold from the linear fit.
     4. If there are enough remaining points, returns an interpolation function.
     5. If not enough points remain, returns the original linear regression function.
 
     If the r-squared value of the linear regression is less than 0.98, the function
     considers the sync to have failed and returns the identity function.
     """
+    import numpy as np
     from scipy.stats import linregress
     from scipy.interpolate import interp1d
 
-    if len(time_a) != len(time_b):
-        tprint(f"Sync failed: time_a and time_b have different lengths: {len(time_a)} != {len(time_b)}")
-        n_sync = min(len(time_a), len(time_b))
-        time_a = time_a[:n_sync]
-        time_b = time_b[:n_sync]
+    time_a, time_b = np.array(time_a), np.array(time_b)
+    time_a0, time_b0 = time_a[0], time_b[0]
     
-    # Check if the syncs are in linear relationship
-    slope, intercept, r_value, _, _ = linregress(time_a, time_b)
+    # Normalize times to start at 0
+    time_a_sync, time_b_sync = time_a - time_a0, time_b - time_b0
+    
+    # Handle different lengths efficiently
+    if len(time_a) != len(time_b):
+        tprint(f"Time_a and time_b have different lengths: {len(time_a)} != {len(time_b)}")
+        tprint("Matching the number of points in time_a and time_b by finding closest corresponding timestamps...")
+        if len(time_a_sync) > len(time_b_sync):
+            indices = np.argmin(np.abs(time_b_sync[:, None] - time_a_sync), axis=1)
+            time_a_sync = time_a_sync[indices]
+        else:
+            indices = np.argmin(np.abs(time_a_sync[:, None] - time_b_sync), axis=1)
+            time_b_sync = time_b_sync[indices]
+    
+    # Calculate linear regression
+    slope, intercept, r_value, _, _ = linregress(time_a_sync, time_b_sync)
     r_squared = r_value**2
+    
     if r_squared < 0.98:
-        tprint(f"Sync failed: slope {slope:.6f}, intercept {intercept:.6f}, r-squared {r_squared:.6f}")
+        tprint(f"Sync \033[91m(failed)\033[0m: slope {slope:.6f}, intercept {intercept:.6f}, r-squared {r_squared:.6f}")
         return lambda x: x
-    tprint(f"Sync OK: slope {slope:.6f}, intercept {intercept:.6f}, r-squared {r_squared:.6f}")
+    
+    tprint(f"Sync \033[92mOK\033[0m: slope {slope:.6f}, intercept {intercept:.6f}, r-squared {r_squared:.6f}")
 
-    # Check if the syncs have any outliers
-    sync_diff = time_a * slope + intercept - time_b
-    outlier = sync_diff >= 0.002  # 2 ms
-    if outlier.sum() > 0:
-        time_a = time_a[~outlier]
-        time_b = time_b[~outlier]
-        tprint(f"Removed {outlier.sum()} outliers")
+    # Check for outliers
+    sync_diff = time_a_sync * slope + intercept - time_b_sync
+    outlier = np.abs(sync_diff) >= threshold
+    
+    if np.any(outlier):
+        outlier_count = np.sum(outlier)
+        time_a_clean, time_b_clean = time_a_sync[~outlier], time_b_sync[~outlier]
+        tprint(f"Removed \033[91m{outlier_count}\033[0m outliers")
+        
+        # Recalculate regression with cleaned data
+        if len(time_a_clean) >= 2:
+            slope, intercept, r_value, _, _ = linregress(time_a_clean, time_b_clean)
+            r_squared = r_value**2
+            tprint(f"After outlier removal: slope {slope:.6f}, intercept {intercept:.6f}, r-squared {r_squared:.6f}")
+    else:
+        time_a_clean, time_b_clean = time_a_sync, time_b_sync
 
-    # Check if there are enough sync points after removing outliers
-    if len(time_a) < 2:
+    # If not enough points after cleaning, use simple linear transformation
+    if len(time_a_clean) < 2:
         tprint("Not enough sync points after removing outliers. Using original linear regression.")
-        return lambda x: x * slope + intercept
+        return lambda x: (x - time_a0) * slope + time_b0 + intercept
 
-    # Return the function to convert nidq time to imec time
-    return interp1d(time_a, time_b, kind='linear', fill_value="extrapolate")
+    # Return interpolation function for time conversion
+    return interp1d(time_a_clean + time_a0, time_b_clean + time_b0, kind='linear', fill_value="extrapolate")
 
 
 def rollover_recovery(data, max_value=2**32):
