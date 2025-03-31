@@ -60,7 +60,8 @@ def metric(path):
 @click.option('--bmi', is_flag=True)
 @click.option('--all', is_flag=True)
 @click.option('--mua', is_flag=True)
-def saveks(path, metric, bmi, all, mua):
+@click.option('--obx', is_flag=True)
+def saveks(path, metric, bmi, all, mua, obx):
     from .utils import finder
     from .ks import Kilosort
     
@@ -76,8 +77,10 @@ def saveks(path, metric, bmi, all, mua):
     
     if not bmi:
         ks.load_sync()
-        ks.load_nidq()
-        ks.load_obx()
+        if obx:
+            ks.load_obx()
+        else:
+            ks.load_nidq()
     
     if metric:
         ks.save_metrics()
