@@ -7,9 +7,10 @@ def main():
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
-def catgt(path):
+@click.option('--supercat', is_flag=True)
+def catgt(path, supercat):
     from .catgt import run_catgt
-    run_catgt(path)
+    run_catgt(path, supercat)
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)

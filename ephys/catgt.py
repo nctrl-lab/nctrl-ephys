@@ -20,7 +20,7 @@ import os
 import inquirer
 import subprocess
 
-from .utils import finder, get_file
+from .utils import finder, get_file, file_reorder
 
 def get_sessions(path=None):
     """Find and return sessions that can be processed by CatGT.
@@ -38,7 +38,7 @@ def get_sessions(path=None):
     print("No sessions found.")
     return []
 
-def run_catgt(path=None):
+def run_catgt(path=None, supercat=False):
     # Get CatGT executable
     catgt = get_file("catgt", "CatGT.exe", "CatGT")
     if not catgt:
@@ -48,7 +48,7 @@ def run_catgt(path=None):
     # Get user selections
     select_stream = inquirer.checkbox("Select stream types to process", 
                                     choices=['ob', 'ni', 'ap', 'lf'],
-                                    default=['ob', 'ni', 'ap', 'lf'])
+                                    default=['ob', 'ni', 'ap'])
     if not select_stream:
         print("No streams selected. Exiting.")
         return
@@ -62,10 +62,17 @@ def run_catgt(path=None):
     if not sessions:
         return
 
+    if len(sessions) == 1:
+        supercat = False
+
+    # Reorder sessions
+    if supercat and len(sessions) > 1:
+        sessions = file_reorder(sessions)
+
     # Process each session
     cmds = []
     for session in sessions:
-        session_name = os.path.basename(session)
+        session_name = os.path.basename(session).replace('catgt_', '')
         dest_dir = os.path.dirname(session)
 
         # Check for existing output
@@ -108,36 +115,107 @@ def run_catgt(path=None):
 
         # Build commands for each stream type
         base_cmd = f'{catgt} -dir="{dest_dir}" -run="{session_name}" -gtlist={gtlist}'
-        base_opts = f'-dest="{dest_dir}" -t_miss_ok -zerofillmax=0'
+        base_opts = f' -dest="{dest_dir}" -t_miss_ok -zerofillmax=0'
 
-        for stream in select_stream:
-            cmd = base_cmd
-            if stream == 'ni' and glob.glob(f"{session}_g0\\*nidq.meta"):
-                cmd += f' -ni {base_opts}'
-            elif stream == 'ob':
-                obx_files = glob.glob(f"{session}_g0\\*obx?.obx.meta")
-                if obx_files:
-                    obx_id = [re.search(r'obx(\d+)', x).group(1) for x in obx_files]
-                    cmd += f' -ob -obx={",".join(obx_id)} {base_opts}'
-                else:
-                    continue
-            elif stream == 'ap' and glob.glob(f"{session}_g0\\**\\*ap.meta"):
-                cmd += f' -ap -prb={i_imec} {base_opts} -prb_fld -out_prb_fld -gbldmx'
-            elif stream == 'lf' and glob.glob(f"{session}_g0\\**\\*lf.meta"):
-                cmd += f' -lf -prb={i_imec} {base_opts} -prb_fld -out_prb_fld'
-            else:
-                continue
-            cmds.append((session, stream, cmd))
+        cmd = base_cmd
+        if 'ni' in select_stream and glob.glob(f"{session}_g0\\*nidq.meta"):
+            cmd += f' -ni -pass1_force_ni_ob_bin'
+        if 'ob' in select_stream and glob.glob(f"{session}_g0\\*obx?.obx.meta"):
+            obx_files = glob.glob(f"{session}_g0\\*obx?.obx.meta")
+            if obx_files:
+                obx_id = [re.search(r'obx(\d+)', x).group(1) for x in obx_files]
+                cmd += f' -ob -obx={",".join(obx_id)} -pass1_force_ni_ob_bin'
+        if 'ap' in select_stream and glob.glob(f"{session}_g0\\**\\*ap.meta"):
+            cmd += f' -ap -prb={i_imec} -prb_fld -out_prb_fld -gbldmx -apfilter=butter,12,300,9000 -gfix=0.40,0.10,0.02'
+        if 'lf' in select_stream and glob.glob(f"{session}_g0\\**\\*lf.meta"):
+            cmd += f' -lf'
+            if 'ap' not in select_stream:
+                cmd += f' -prb={i_imec} -prb_fld -out_prb_fld'
+        cmd += base_opts
+        cmds.append((session, cmd))
 
     # Execute commands
-    for i, (session, stream, cmd) in enumerate(cmds, 1):
-        print(f"\033[91m{i}/{len(cmds)}: Running CatGT for {session} ({stream}): {cmd}\033[0m")
+    for i, (session, cmd) in enumerate(cmds, 1):
+        print(f"\033[91m{i}/{len(cmds)}: Running CatGT for {session}: {cmd}\033[0m")
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode != 0:
-            print(f"\033[91mError running CatGT for {session} ({stream}):\033[0m")
+            print(f"\033[91mError running CatGT for {session}:\033[0m")
             print(result.stderr)
         else:
-            print(f"\033[32mCatGT completed successfully for {session} ({stream})\033[0m")
+            print(f"\033[32mCatGT completed successfully for {session}\033[0m")
+
+    if supercat:
+        cmds = []
+        supercat_dir = []
+        dest_dir0 = None
+        session_name0 = None
+        for session in sessions:
+            dest_dir = os.path.dirname(session)
+            session_name = os.path.basename(session).replace('catgt_', '')
+            cat_fn = glob.glob(f"{dest_dir}/catgt_{session_name}*")
+            if cat_fn:
+                cat_name = os.path.basename(cat_fn[0])
+                supercat_dir.append(f'{{{dest_dir},{cat_name}}}')
+                if dest_dir0 is None:
+                    dest_dir0 = dest_dir
+                    session_name0 = cat_name.replace('catgt_', '')
+        
+        if not supercat_dir:
+            print("No CatGT output found. Exiting.")
+            return
+        supercat_dir = ''.join(supercat_dir)
+
+        # Check for existing output
+        if glob.glob(f"{dest_dir0}/supercat_{session_name0}*"):
+            print(f"CatGT Supercat output already exists.")
+            if not inquirer.confirm("Do you want to overwrite?", default=True):
+                return
+
+        # Get probe info if needed
+        i_imec = ''
+        if need_imec:
+            imecs = [folder for folder in glob.glob(f"{dest_dir0}/catgt_{session_name0}/*imec?/")]
+            imecs_id = [re.search(r'imec(\d+)', x).group(1) for x in imecs]
+            if select_all_imec:
+                i_imec = ','.join(imecs_id)
+            else:
+                selected_imecs = inquirer.checkbox(
+                    message="Select imec probes to run CatGT",
+                    choices=list(zip(imecs, imecs_id)),
+                    default=list(zip(imecs, imecs_id))
+                )
+                i_imec = ','.join(selected_imecs)
+
+        # Build commands for each stream type
+        base_cmd = f'{catgt} -supercat="{supercat_dir}"'
+        base_opts = f' -dest="{dest_dir0}"'
+
+        cmd = base_cmd
+        if 'ni' in select_stream and glob.glob(f"{dest_dir0}\\catgt_{session_name0}\\*nidq.meta"):
+            cmd += f' -ni'
+        if 'ob' in select_stream and glob.glob(f"{dest_dir0}\\catgt_{session_name0}\\*obx?.obx.meta"):
+            obx_files = glob.glob(f"{dest_dir0}\\catgt_{session_name0}\\*obx?.obx.meta")
+            if obx_files:
+                obx_id = [re.search(r'obx(\d+)', x).group(1) for x in obx_files]
+                cmd += f' -ob -obx={",".join(obx_id)}'
+        if 'ap' in select_stream and glob.glob(f"{dest_dir0}\\catgt_{session_name0}\\**\\*ap.meta"):
+            cmd += f' -ap -prb={i_imec} -prb_fld -out_prb_fld'
+        if 'lf' in select_stream and glob.glob(f"{dest_dir0}\\catgt_{session_name0}\\**\\*lf.meta"):
+            cmd += f' -lf'
+            if 'ap' not in select_stream:
+                cmd += f' -prb={i_imec} -prb_fld -out_prb_fld'
+        cmd += base_opts
+        cmds.append((session_name0, cmd))
+
+        # Execute commands
+        for i, (stream, cmd) in enumerate(cmds, 1):
+            print(f"\033[91m{i}/{len(cmds)}: Running CatGT for {stream}: {cmd}\033[0m")
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"\033[91mError running CatGT for {stream}:\033[0m")
+                print(result.stderr)
+            else:
+                print(f"\033[32mCatGT completed successfully ({stream})\033[0m")
 
 if __name__ == '__main__':
-    run_catgt(path='C:\\SGL_DATA')
+    run_catgt(path='C:\\SGL_DATA', supercat=True)
