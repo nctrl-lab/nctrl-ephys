@@ -820,8 +820,6 @@ class Kilosort():
         Saves spike data, sync data, and NIDQ data (if available) to '{self.session}_data.mat'.
         Includes all unit data, raw waveforms, and metrics if present.
         """
-
-    def save(self, path=None, session=False):
         path = path or self.path
 
         spike = {
@@ -872,26 +870,8 @@ class Kilosort():
             data['sync'] = self.sync
         if self.nidq:
             data['nidq'] = self.nidq
-
         if hasattr(self, 'obx'):
             data['obx'] = self.obx
-
-        if session:
-            fns = finder(path, 'imec\.ap\.csv$', multiple=True)
-            if len(fns) > 1:
-                raise ValueError(f"Found multiple IMEC .ap.csv files in {path}")
-            csv = pd.read_csv(fns[0], sep=",")
-            csv = csv.rename(columns={
-                "filename": "file",
-                "mtime": "mtime",
-                "filesize": "size",
-                "n_sample": "nsmp",
-                "start": "start"
-            })
-            session_data = {col: csv[col].astype(str).to_numpy() if csv[col].dtype == 'object' else csv[col].to_numpy()
-                       for col in csv.columns}
-            data['session'] = session_data
-            tprint(f"Saving csv Session data to {fns[0]}")
 
         fn = os.path.join(path, f'{self.session}_data.mat')
         tprint(f"Saving Kilosort data to {fn}")

@@ -62,8 +62,7 @@ def metric(path):
 @click.option('--all', is_flag=True)
 @click.option('--mua', is_flag=True)
 @click.option('--obx', is_flag=True)
-@click.option('--session', is_flag=True)
-def saveks(path, metric, bmi, all, mua, obx, session):
+def saveks(path, metric, bmi, all, mua, obx):
     from .utils import finder
     from .ks import Kilosort
     
@@ -87,7 +86,7 @@ def saveks(path, metric, bmi, all, mua, obx, session):
     if metric:
         ks.save_metrics()
     
-    ks.save(session=session)
+    ks.save()
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
