@@ -810,7 +810,7 @@ class Kilosort():
         # calculate IMEC time
         self.obx['time_imec'] = sync(self.sync['time_obx'], self.sync['time_imec'])(self.obx['time'])
 
-    def save(self, path=None):
+    def save(self, path=None, session=False):
         """
         Save Kilosort data to a MATLAB file.
 
@@ -872,6 +872,23 @@ class Kilosort():
             data['nidq'] = self.nidq
         if hasattr(self, 'obx'):
             data['obx'] = self.obx
+        
+        if session:
+            fns = finder(path, 'imec\.ap\.csv$', multiple=True)
+            if len(fns) > 1:
+                raise ValueError(f"Found multiple IMEC .ap.csv files in {path}")
+            csv = pd.read_csv(fns[0], sep=",")
+            csv = csv.rename(columns={
+                "filename": "file",
+                "mtime": "mtime",
+                "filesize": "size",
+                "n_sample": "nsmp",
+                "start": "start"
+            })
+            session_data = {col: csv[col].astype(str).to_numpy() if csv[col].dtype == 'object' else csv[col].to_numpy()
+                       for col in csv.columns}
+            data['session'] = session_data
+            tprint(f"Saving csv Session data to {fns[0]}")
 
         fn = os.path.join(path, f'{self.session}_data.mat')
         tprint(f"Saving Kilosort data to {fn}")
