@@ -10,7 +10,7 @@ from .utils import tprint, finder
 
 
 class Spike:
-    def __init__(self, path, coord=None):
+    def __init__(self, path, coord=None, angle=0.0, rotation=0.0, rotation_holder=0.0):
         """
         Initialize the Spike object.
 
@@ -24,6 +24,30 @@ class Spike:
             * AP: anterior-posterior from the bregma in mm (positive: anterior)
             * DV: dorsal-ventral from the pial surface in mm (positive: ventral)
             * ML: medial-lateral from the bregma in mm (positive: right)
+
+            * If you are using wide probe like Neuropixels 2.0, the coord is the center of the probe.
+
+        angle: float, optional (default: 0.0)
+            The angle of the probe in the brain in degrees (positive: anterior).
+            = ~pitch of the manipulator
+            * 0 degrees indicates the probe is pointing posterior (vertical).
+            * positive values indicate the probe is pointing anterior.
+            * negative values indicate the probe is pointing posterior.
+
+        rotation: float, optional (default: 0.0)
+            The rotation of the manipulator in the brain in degrees (positive: clockwise).
+            = ~yaw of the manipulator
+            * 0 degrees indicates the manipulator arm is facing posterior.
+            * positive values indicate the manipulator arm is facing left (you rotated the manipulator clockwise).
+            * negative values indicate the manipulator arm is facing right (you rotated the manipulator counter-clockwise).
+
+        rotation_holder: float, optional (default: 0.0)
+            The rotation of the probe in the holder in degrees (positive: clockwise).
+            = ~yaw of the probe in the holder
+            * 0 degrees indicates the probe is facing posterior.
+            * positive values indicate the probe is facing left (you rotated the probe holder clockwise).
+            * negative values indicate the probe is facing right (you rotated the probe holder counter-clockwise).
+
         """
         self.path = path
 
@@ -36,7 +60,11 @@ class Spike:
         if coord is not None:
             if len(coord) != 3:
                 raise ValueError("coord must be a list or numpy array with 3 elements")
+
             self.coord = np.array(coord)
+            self.angle = np.radians(angle)
+            self.rotation = np.radians(rotation)
+            self.rotation_holder = np.radians(rotation_holder)
             self.load_atlas()
             self.load_channel_position()
             self.load_unit_position()
@@ -130,50 +158,110 @@ class Spike:
 
         self.scene = Scene()
         self.atlas = self.scene.atlas
-        self.origin = self.coord_to_origin()
+        self.origin = self._coord_to_origin()
     
-    def coord_to_origin(self):
-        """Convert coordinates in mm to indices."""
+    def _coord_to_origin(self):
+        """Convert coordinates in mm to indices in um."""
         # Constants
-        BREGMA = np.array([5400, 0, 5700]) # in um
+        BREGMA = np.array([5400, 0, 5700])  # in um
         SCALING = np.array([-1000, 1000, -1000])
-
+        
         # Convert to atlas space
-        coord_surface_to_tip = self.coord * SCALING + BREGMA
-        tip_length_um = self.spike.get('meta', {}).get('imTipLength', 0)
-        coord_surface_to_electrode = coord_surface_to_tip + np.array([0, -tip_length_um, 0])
-
-        # Get indices
+        coord_surface = self.coord * SCALING + BREGMA
+        
+        # Get surface index
         resolution = np.array(self.atlas.resolution)
-        idx = np.round(coord_surface_to_electrode / resolution).astype(int)
-        surface = np.where(self.atlas.annotation[idx[0], :, idx[2]] != 0)[0][0]
-
-        return coord_surface_to_electrode + np.array([0, surface, 0]) * resolution
-    
-    def _position_to_coords(self, position):
-        """Convert probe positions to atlas coordinates"""
-        shape_um = self.atlas.shape_um
-        resolution = np.array(self.atlas.resolution)
-        coords = np.column_stack((position * np.array([1, -1]), np.zeros(len(position)))) + self.origin
-        return np.clip(coords, 0, shape_um - resolution)
+        idx = np.round(coord_surface / resolution).astype(int)
+        surface_idx = np.where(self.atlas.annotation[idx[0], :, idx[2]] != 0)[0][0]
+        
+        # Calculate surface coordinates
+        dv_surface = surface_idx * resolution[1]
+        ap_surface = coord_surface[0]
+        ml_surface = coord_surface[2]
+        
+        # Calculate lengths
+        length_surface_to_tip = self.coord[1] * 1000
+        length_channel_to_tip = self.spike.get('meta', {}).get('imTipLength', 0)
+        length_surface_to_channel = length_surface_to_tip - length_channel_to_tip
+        
+        # Calculate offsets
+        dv_surface_to_channel = length_surface_to_channel * np.cos(self.angle)
+        length_horizontal = length_surface_to_channel * np.sin(self.angle)
+        ap_surface_to_channel = length_horizontal * np.cos(self.rotation)
+        ml_surface_to_channel = length_horizontal * np.sin(self.rotation)
+        
+        # Calculate final channel coordinates
+        return np.array([
+            ap_surface - ap_surface_to_channel,
+            dv_surface + dv_surface_to_channel,
+            ml_surface + ml_surface_to_channel
+        ])
 
     def load_channel_position(self):
         """Load channel locations"""
         tprint("Loading channel locations")
-        electrodes = self.spike.get('meta', {}).get('snsGeomMap', {}).get('electrodes')
+        meta = self.spike.get('meta', {})
+        snsGeomMap = meta.get('snsGeomMap', {})
+        electrodes = snsGeomMap.get('electrodes')
+        
         if not electrodes:
             return
 
         df = pd.DataFrame(electrodes)
-        self.channel_position = df[['x', 'z']].values.copy()
+        shank_spacing = snsGeomMap.get('header', {}).get('shank_spacing', 0)
+        
+        # Calculate x positions with shank offset
+        channel_position_x = df['x'].values + shank_spacing * df['shank'].values
+        # Center the x positions
+        self.position_x_correction = (channel_position_x.min() + channel_position_x.max()) // 2
+        channel_position_x -= self.position_x_correction
+        channel_position_z = df['z'].values
+        
+        # Create position array and calculate coordinates
+        self.channel_position = np.column_stack((channel_position_x, channel_position_z))
         self.channel_coords = self._position_to_coords(self.channel_position)
         self.channel_region = [self.atlas.structure_from_coords(c, microns=True, as_acronym=True) 
                              for c in self.channel_coords]
-    
+
+    def _position_to_coords(self, position):
+        """Convert probe positions to atlas coordinates"""
+        shape_um = self.atlas.shape_um
+        resolution = np.array(self.atlas.resolution)
+
+        # x, z = position
+        pos = np.column_stack((np.zeros_like(position[:, 0]), position[:, 1], position[:, 0])).T  # (3, 384): (AP, DV, ML)G
+
+        # Rotation of the probe in the holder
+        R_holder = np.array([
+            [np.cos(self.rotation_holder), 0, -np.sin(self.rotation_holder)],
+            [0, 1, 0],
+            [np.sin(self.rotation_holder), 0, np.cos(self.rotation_holder)]
+        ])
+
+        R_angle = np.array([
+            [np.cos(self.angle), -np.sin(self.angle), 0],
+            [np.sin(self.angle), np.cos(self.angle), 0],
+            [0, 0, 1]
+        ])
+
+        R_rotation = np.array([
+            [np.cos(self.rotation), 0, -np.sin(self.rotation)],
+            [0, 1, 0],
+            [np.sin(self.rotation), 0, np.cos(self.rotation)]
+        ])
+
+        pos_holder = R_holder @ pos
+        pos_angle = R_angle @ pos_holder
+        pos_rotation = R_rotation @ pos_angle
+
+        coords = pos_rotation.T * np.array([-1, -1, 1]) + self.origin
+        return np.clip(coords, 0, shape_um - resolution)
+
     def load_unit_position(self):
         """Load unit locations"""
         tprint("Loading unit locations")
         self.unit_position = self.spike['waveform_position'][:, 0, :]
+        self.unit_position[:, 0] -= self.position_x_correction
         self.unit_coords = self._position_to_coords(self.unit_position)
         self.unit_region = [self.atlas.structure_from_coords(c, microns=True, as_acronym=True)
                           for c in self.unit_coords]
@@ -559,8 +647,8 @@ def get_latency(spike, event_onset, event_offset, duration=0.08, offset=0.3):
 
 
 if __name__ == '__main__':
-    path = finder(path=r"Z:\bangy\nogo_go\data_ephys\A16", msg='Select a session file', pattern=r'.mat$')
-    spike = Spike(path, [-3.2, 5.5, -0.6])
+    path = finder(path=r"Z:\kimd\project-stroke\data_ephys", msg='Select a session file', pattern=r'.mat$')
+    spike = Spike(path, [1, 1.5, -1.75], 0, 0, -90)
     spike.add_region('VTA', hemisphere='left')
     spike.plot_brain()
     print(spike.unit_region)
