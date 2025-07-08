@@ -554,18 +554,54 @@ def get_spike_bin_nd(time_spike, time_trial, bin_size=0.01, window=[-5, 5], sigm
     return time_conv, spike_conv
 
 
-def smooth(time_binned, type="gaussian", sigma=10, axis=1, mode="same"):
+def smooth(time_binned, type="gaussian", sigma=10, axis=-1, mode="same"):
+    """
+    Smooth time-binned data using convolution with various window types.
+    
+    Parameters
+    ----------
+    time_binned : ndarray
+        Input array containing time-binned data to be smoothed.
+    type : str, optional
+        Type of smoothing window. Options are "gaussian" (default) or "boxcar".
+    sigma : float, optional
+        Standard deviation for Gaussian window or window size for boxcar.
+        If 0, returns the original data without smoothing.
+    axis : int, optional
+        Axis along which to apply the smoothing convolution.
+    mode : str, optional
+        Mode for convolution operation. Options are "same", "full", or "valid".
+        Default is "same".
+    
+    Returns
+    -------
+    ndarray
+        Smoothed time-binned data with the same shape as input.
+    
+    Raises
+    ------
+    ValueError
+        If an invalid smoothing type is provided.
+    
+    Notes
+    -----
+    For Gaussian smoothing, the window size is calculated as (7.5 * sigma) // 2 * 2 + 1
+    to ensure an odd number of points. The window is normalized to sum to 1.
+    
+    For boxcar smoothing, a simple moving average is applied using a window of size sigma.
+    """
     if sigma == 0:
         return time_binned
 
     if type == "gaussian":
+        window_size = int(7.5 * sigma) // 2 * 2 + 1
         if hasattr(signal, "gaussian"):
-            window = signal.gaussian(5 * sigma, sigma)
+            window = signal.gaussian(window_size, sigma)
         else:
-            window = signal.windows.gaussian(5 * sigma, sigma)
+            window = signal.windows.gaussian(window_size, sigma)
         window /= np.sum(window)
     elif type == "boxcar":
-        window = np.ones(sigma)
+        window = np.ones(int(sigma))
     else:
         raise ValueError(f"Invalid smoothing type: {type}")
 
