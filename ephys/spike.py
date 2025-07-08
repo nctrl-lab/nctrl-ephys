@@ -493,6 +493,67 @@ def get_spike_bin(time_aligned, bin_size=0.01, window=[-5, 5]):
     return t, time_binned
 
 
+def get_spike_bin_nd(time_spike, time_trial, bin_size=0.01, window=[-5, 5], sigma=10):
+    """
+    Efficiently bin spike times relative to trial-aligned windows.
+
+    Parameters
+    ----------
+    time_spike : 1D array-like
+        **Sorted** spike times (in seconds).
+    time_trial : n-D array-like (n_trial, n_bin, ...)
+        Array of trial-aligned time points (e.g., trial start or event times).
+        Doesn't need to be sorted.
+    bin_size : float, optional
+        Size of each bin (in seconds).
+    window : list or tuple, optional
+        Time window [start, end] relative to each time_trial point.
+    sigma : float, optional
+        Standard deviation of the Gaussian kernel for smoothing.
+        If 0, no smoothing is applied.
+        Actual sigma is `sigma * bin_size`. For PSTH plot, typically use 100 ms.
+
+    Returns
+    -------
+    spike_bin : ndarray (n_trial, n_bin, ..., n_t)
+        Binned spike counts for each trial, bin, and time bin.
+        If sigma > 0, the spike counts are convolved with a Gaussian kernel.
+    """
+    time_spike = np.asarray(time_spike)
+    time_trial = np.asarray(time_trial)
+    
+    if sigma == 0:
+        safe_margin = 0
+    else:
+        safe_margin = 5 * sigma * bin_size
+
+    time_bin = np.arange(window[0] - safe_margin, window[1] + bin_size + safe_margin, bin_size)
+    time_center = time_bin[:-1] + bin_size / 2
+    n_time = time_bin.size - 1
+
+    bin_edges = time_trial[..., None] + time_bin
+
+    left_edges = bin_edges[..., :-1].ravel()
+    right_edges = bin_edges[..., 1:].ravel()
+
+    all_edges = np.concatenate([left_edges, right_edges])
+    idx = np.searchsorted(time_spike, all_edges)
+    
+    split_point = left_edges.size
+    left_idx = idx[:split_point]
+    right_idx = idx[split_point:]
+
+    spike_bin = (right_idx - left_idx).reshape(*time_trial.shape, n_time)
+
+    if sigma == 0:
+        return time_bin, spike_bin
+    
+    in_time = (time_center >= window[0]) & (time_center <= window[1])
+    time_conv = time_center[in_time]
+    spike_conv = smooth(spike_bin, sigma=sigma, axis=-1)[..., in_time]
+    return time_conv, spike_conv
+
+
 def smooth(time_binned, type="gaussian", sigma=10, axis=1, mode="same"):
     if sigma == 0:
         return time_binned
