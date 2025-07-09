@@ -38,7 +38,7 @@ def downsample(t, data, fs=2000, fs_target=500):
 
     return t_ds, data_ds_notch
 
-def get_band(f, psd, f_center=None, is_sum=True):
+def get_band(f, psd, f_center=None, is_sum=True, axis=0):
     # get frequency bands (2-128 Hz)
     if f_center is None:
         f_center = 2**np.arange(1, 7.2, 0.2) # 2-128 Hz with log spacing
@@ -46,19 +46,22 @@ def get_band(f, psd, f_center=None, is_sum=True):
     else:
         f_log_center = np.log2(f_center)
     f_log_gap = np.diff(f_log_center) / 2
-    f_log_gap_low = np.concatenate([f_log_gap[0], f_log_gap])
-    f_log_gap_high = np.concatenate([f_log_gap, f_log_gap[-1]])
+    f_log_gap_low = np.concatenate([[f_log_gap[0]], f_log_gap])
+    f_log_gap_high = np.concatenate([f_log_gap, [f_log_gap[-1]]])
     f_low = f_log_center - f_log_gap_low
     f_high = f_log_center + f_log_gap_high
     f_bands = np.column_stack([2**(f_low), 2**(f_high)])
     n_band = len(f_center)
 
     df = f[1] - f[0]
-    psd_band = np.zeros(n_band)
+    psd_perm = np.moveaxis(psd, axis, 0)
+    psd_shape = psd_perm.shape
+    psd_band = np.zeros((n_band, *psd_shape[1:]))
     for i_band in range(n_band):
         in_band = (f >= f_bands[i_band, 0]) & (f <= f_bands[i_band, 1])
         if is_sum:
-            psd_band[i_band] = np.sum(psd[in_band]) * df
+            psd_band[i_band] = np.sum(psd_perm[in_band], axis=0) * df
         else:
-            psd_band[i_band] = np.mean(psd[in_band])
+            psd_band[i_band] = np.mean(psd_perm[in_band], axis=0)
+    psd_band = np.moveaxis(psd_band, 0, axis)
     return f_center, psd_band
