@@ -6,10 +6,10 @@ def filter(data, fs=500, f_low=None, f_high=None, order=3, axis=0):
 
     if f_low is None and f_high is None:
         return data
-    elif f_low is not None:
+    elif f_low is not None and f_high is None:
         passtype = 'lowpass'
         passband = f_low / nyquist_freq
-    elif f_high is not None:
+    elif f_high is not None and f_low is None:
         passtype = 'highpass'
         passband = f_high / nyquist_freq
     else:
