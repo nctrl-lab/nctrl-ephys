@@ -411,6 +411,33 @@ class Spike:
 
         update_plot()
         root.mainloop()
+    
+    def ccg(self, ids=None, bin_size=0.001, half_bin=50):
+        if ids is not None:
+            ids = np.array(ids)
+            spike_df = self.spike_df[self.spike_df["unit"].isin(ids)]
+        else:
+            spike_df = self.spike_df
+        output, bins, ids = CCG(spike_df["time"].values, spike_df["unit"].values, bin_size, half_bin)
+        return output, bins, ids
+    
+    def plot_ccg(self, ids=None, bin_size=0.001, half_bin=50):
+        output, bins, ids = self.ccg(ids, bin_size, half_bin)
+        n_plot = min(8, output.shape[0])
+
+        plt.figure(figsize=(8, 8))
+        for i in range(n_plot):
+            for j in range(n_plot):
+                ax = plt.subplot(n_plot, n_plot, i * n_plot + j + 1)
+                ax.bar(bins, output[i, j], width=bins[1] - bins[0])
+                ax.set_title(f'{ids[i]:.0f} → {ids[j]:.0f}', fontsize=7)
+                ax.set_xlim(bins[0], bins[-1])
+                ax.tick_params(axis='both', which='major', labelsize=6)
+                ax.tick_params(axis='both', which='minor', labelsize=5)
+                ax.xaxis.label.set_size(7)
+                ax.yaxis.label.set_size(7)
+        plt.tight_layout(pad=0.3)
+        plt.show()
 
 
 def align(time_spike, time_event, window=[-5, 5]):
@@ -899,17 +926,106 @@ def get_latency(spike, event_onset, event_offset, duration=0.08, offset=0.3):
         "count_base": count_base,
     }
 
+def CCG(spk_time, spk_id, bin_size=0.001, half_bin=50):
+    """
+    Calculate the CCG (cross-correlogram) from spike times of multiple neurons.
+
+    Parameters
+    ----------
+    spk_time : np.ndarray
+        Array of spike times (in seconds).
+    spk_id : np.ndarray
+        Array of spike cluster IDs (same length as spk_time).
+    bin_size : float, optional
+        Bin size in seconds (default: 0.001).
+    half_bin : int, optional
+        Number of bins in the CCG window (default: 50).
+        The final bin number will be 2 * half_bin + 1.
+
+    Returns
+    -------
+    output : np.ndarray
+        CCG matrix of shape (N, N, #bins), where N is the number of unique clusters.
+        output[i, j] is the cross-correlogram of neuron pair (i, j).
+    bins : np.ndarray
+        The bin edges used for the CCG.
+    ids : np.ndarray
+        The unique cluster IDs in the order used for the CCG matrix.
+    
+    Note
+    ----
+    Bins (bin_size = 0.001, half_bin = 50):
+        0: -50.5 < t <= -49.5 (ms)
+        ...
+        49: -1.5 < t <= -0.5
+        50: -0.5 < t < 0.5
+        51: 0.5 <= t < 1.5
+        ...
+        100: 49.5 <= t < 50.5
+    """
+    assert bin_size > 0
+    assert spk_time.size == spk_id.size
+
+    unique_ids, id_idx, inv_idx = np.unique(spk_id, return_index=True, return_inverse=True)
+    ids = spk_id[id_idx]
+    n_clu = len(unique_ids)
+
+    # Binning
+    half_edges = (np.arange(half_bin + 1) + 0.5) * bin_size
+    half_edges = np.concatenate(([0], half_edges))
+    bins = np.arange(-half_bin, half_bin + 1) * bin_size
+    radius = half_edges[-1]
+
+    # Make sure spikes are sorted by time
+    spk_idx = np.argsort(spk_time)
+    spk_time = spk_time[spk_idx]
+    inv_idx = inv_idx[spk_idx]
+
+    half_ccg = np.zeros([n_clu, n_clu, half_bin + 1], dtype='int64')
+
+    shift = 1
+    mask = np.ones_like(spk_time, dtype=bool)
+
+    while mask[:-shift].any():
+        # Time difference between spikes
+        spike_offsets = spk_time[shift:] - spk_time[:-shift]
+
+        # Find bin index
+        spike_bin_offs = np.searchsorted(half_edges, spike_offsets, side='right') - 1
+
+        # Remove spikes that are too far away
+        mask[:-shift][spike_bin_offs > half_bin] = False
+
+        m = mask[:-shift].copy()
+        time_offs = spike_bin_offs[m]
+        idx = np.ravel_multi_index(
+            (inv_idx[:-shift][m], inv_idx[shift:][m], time_offs), half_ccg.shape
+        )
+
+        counts = np.bincount(idx)
+        half_ccg.ravel()[:len(counts)] += counts
+        shift += 1
+
+    # Remove self-correlation
+    np.fill_diagonal(half_ccg[..., 0], 0)
+
+    # Symmetrize CCG
+    half_ccg[..., 0] = half_ccg[..., 0] + half_ccg[..., 0].T
+    sym = half_ccg[..., 1:][..., ::-1]
+    sym = np.transpose(sym, (1, 0, 2))
+    output = np.dstack((sym, half_ccg))
+    return output, bins, ids
 
 if __name__ == "__main__":
-    path = finder(
-        path=r"Z:\kimd\project-stroke\data_ephys",
-        msg="Select a session file",
-        pattern=r".mat$",
-    )
-    spike = Spike(path, [1, 1.5, -1.75], 0, 0, -90)
-    spike.add_region("VTA", hemisphere="left")
-    spike.plot_brain()
-    print(spike.unit_region)
+    # path = finder(
+    #     path=r"Z:\kimd\project-stroke\data_ephys",
+    #     msg="Select a session file",
+    #     pattern=r".mat$",
+    # )
+    # spike = Spike(path, [1, 1.5, -1.75], 0, 0, -90)
+    # spike.add_region("VTA", hemisphere="left")
+    # spike.plot_brain()
+    # print(spike.unit_region)
 
     # # interactive plot
     # spike.plot()
@@ -918,5 +1034,8 @@ if __name__ == "__main__":
     # time_event = spike.nidq.query('chan == 5 and type == 1')['time_imec'].values
     # plot_tagging(spike.spike['time'], time_event)
     # plt.show()
-    breakpoint()
 
+    fn = finder(pattern=r'.mat$')
+    spike = Spike(fn)
+    spike.plot_ccg(ids=[10, 59, 60, 62])
+    breakpoint()
