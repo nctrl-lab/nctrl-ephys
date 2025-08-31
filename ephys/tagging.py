@@ -46,7 +46,7 @@ def prepare_logrank(spikes, lasers, window=0.01, latency=0.000, n_base=None):
             spikes_laser: Laser spike times with censoring
     """
     if n_base is None:
-        n_base = (np.diff(lasers).min() - 5 * window) // window # do not use the 5 windows after the laser
+        n_base = (np.diff(lasers).min() - 2 * window) // window # do not use the 2 windows after the laser
 
     test_times = lasers + latency
     base_times = np.sort((lasers[:, np.newaxis] + np.arange(-window*n_base, 0, window)).flatten())
@@ -75,7 +75,7 @@ def prepare_logrank(spikes, lasers, window=0.01, latency=0.000, n_base=None):
 
 def prepare_salt(spikes, lasers, window=0.01, latency=0.000, n_base=None):
     if n_base is None:
-        n_base = int((np.diff(lasers).min() - 5 * window) // window) # do not use the 5 windows after the laser
+        n_base = int((np.diff(lasers).min() - 2 * window) // window) # do not use the 2 windows after the laser
 
     n_laser = len(lasers)
 

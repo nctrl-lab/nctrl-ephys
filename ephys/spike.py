@@ -466,7 +466,7 @@ def count_spike(time_spike, time_event, window=[-0.5, 0.5]):
     return counts.reshape(orig_shape)
 
 
-def get_raster(time_aligned, type_event, reorder=1, line=True):
+def get_raster(time_aligned, type_event, reorder=1, line=False):
     if type_event.dtype == float:
         type_event = type_event.astype(int)
     n_type = np.max(type_event) + 1
@@ -667,19 +667,25 @@ def get_raster_psth(
     reorder=1,
     bin_size=0.01,
     sigma=10,
-    line=True,
+    line=False,
 ):
     if type_event is None:
         type_event = np.zeros(len(time_event))
+    
+    if sigma > 0:
+        half_window = 7.5 * sigma / 2 * bin_size
+    else:
+        half_window = 0
 
     in_event = ~np.isnan(type_event)
     time_event = time_event[in_event]
     type_event = type_event[in_event].astype("int64")
     type_unique, type_index = np.unique(type_event, return_inverse=True)
 
-    time_aligned = align(time_spike, time_event, window)
+    window_plus = [window[0] - half_window, window[1] + half_window]
+    time_aligned = align(time_spike, time_event, window_plus)
     x, y = get_raster(time_aligned, type_index, reorder, line)
-    t, psth, psth_sem = get_psth(time_aligned, type_index, bin_size, sigma, window)
+    t, psth, psth_sem = get_psth(time_aligned, type_index, bin_size, sigma, window_plus)
 
     return {"x": x, "y": y}, {"t": t, "y": psth, "sem": psth_sem}
 
@@ -694,6 +700,8 @@ def plot_raster_psth(
     sigma=10,
     fig=None,
     plot_bar=False,
+    line=False,
+    cmap=None
 ):
     """
     Plot raster and PSTH (Peri-Stimulus Time Histogram) for spike data.
@@ -746,13 +754,20 @@ def plot_raster_psth(
         sigma=sigma,
     )
 
-    cmap = [(0, 0, 0)] + list(plt.get_cmap("tab10").colors)
+    if cmap is None:
+        if type_event is None:
+            cmap = [(0, 0, 0)]
+        elif np.unique(type_event).size > 1:
+            cmap = list(plt.get_cmap("tab10").colors)
+        else:
+            cmap = [(0, 0, 0)]
+
     for i, (x, y, y_psth, y_sem) in enumerate(
         zip(raster["x"], raster["y"], psth["y"], psth["sem"])
     ):
         color = cmap[i % len(cmap)]
         if x is not None and y is not None:
-            ax1.plot(x, y, color=color, linewidth=0.5)
+            ax1.plot(x, y, color=color, linestyle="none", marker='.', markersize=1)
 
         if y_psth is not None:
             if not plot_bar:
@@ -786,7 +801,7 @@ def plot_raster_psth(
 
 
 def plot_tagging(
-    time_spikes, time_onset, time_offset=None, window=[-0.05, 0.1], bin_size=0.001
+    time_spikes, time_onset, time_offset=None, window=[-0.025, 0.05], bin_size=0.001
 ):
     """
     Plot raster, PSTH, and cumulative plot for spike tagging analysis.
@@ -804,6 +819,8 @@ def plot_tagging(
     bin_size : float, default 0.001
         Size of time bins for PSTH, in seconds.
     """
+    from .tagging import test_logrank, test_salt
+
     n_unit = len(time_spikes)
 
     if time_offset is None:
@@ -819,14 +836,17 @@ def plot_tagging(
     for i_unit in range(n_unit):
         # calculate raster and psth
         raster, psth = get_raster_psth(
-            time_spikes[i_unit], time_onset, window=window, bin_size=bin_size, sigma=0
+            time_spikes[i_unit], time_onset, window=window, bin_size=bin_size, sigma=0, line=False
         )
         ylim_psth = [0, np.nanmax(psth["y"]) * 1.1]
 
         # calculate cumulative plot
-        c = get_latency(
-            time_spikes[i_unit], time_onset, time_offset, duration=window[1]
-        )
+        if isinstance(time_spikes[i_unit], (list, np.ndarray)) and len(time_spikes[i_unit]) > 10:
+            p_logrank, t_logrank, H1, H2 = test_logrank(time_spikes[i_unit], time_onset, window=window[1])
+            p_salt, Idiff = test_salt(time_spikes[i_unit], time_onset, window=window[1], bin_size=bin_size)
+        else:
+            p_logrank, t_logrank, H1, H2 = None, None, None, None
+            p_salt, Idiff = None, None
 
         gs_unit = gridspec.GridSpecFromSubplotSpec(
             2, 1, subplot_spec=gs_main[i_unit, 0], hspace=0.05
@@ -842,17 +862,15 @@ def plot_tagging(
         for i, (x, y, y_psth) in enumerate(zip(raster["x"], raster["y"], psth["y"])):
             color = cmap[i % len(cmap)]
             if x is not None and y is not None:
-                ax0.plot(x, y, color=color, linewidth=0.5)
+                ax0.plot(x, y, color=color, linestyle="none", marker='.', markersize=1)
 
             if y_psth is not None:
                 ax1.bar(psth["t"], y_psth, color=color, width=bin_size, linewidth=0)
 
-        ax2.plot(
-            c["time_event"], c["count_event"], color=[0.0, 0.718, 1.0], linewidth=0.75
-        )
-        ax2.plot(
-            c["time_base"], c["count_base"], color="gray", linestyle="--", linewidth=0.5
-        )
+        if H1 is not None:
+            ax2.plot(t_logrank, H1, color="gray", linestyle="--", linewidth=0.5)
+            ax2.plot(t_logrank, H2, color=[0, 0.718, 1.0], linestyle="-", linewidth=0.75)
+            ax2.set_title(f"p(log-rank) = {p_logrank:.3f}, p(SALT) = {p_salt:.3f}")
 
         # Set labels and titles
         ax0.set_title(f"Unit {i_unit + 1}")
@@ -869,6 +887,9 @@ def plot_tagging(
         ax0.set_ylim(ylim_raster)
         ax1.set_ylim(ylim_psth)
         ax2.set_ylim(ylim_c)
+
+        # Remove x tick labels for raster
+        ax0.set_xticklabels([])
 
         # Remove top and right spines
         for ax in [ax0, ax1, ax2]:
@@ -974,7 +995,6 @@ def CCG(spk_time, spk_id, bin_size=0.001, half_bin=50):
     half_edges = (np.arange(half_bin + 1) + 0.5) * bin_size
     half_edges = np.concatenate(([0], half_edges))
     bins = np.arange(-half_bin, half_bin + 1) * bin_size
-    radius = half_edges[-1]
 
     # Make sure spikes are sorted by time
     spk_idx = np.argsort(spk_time)
