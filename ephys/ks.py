@@ -158,6 +158,7 @@ class Kilosort():
         load_meta(self): Load metadata from the recording.
         _load_kilosort(self): Load Kilosort output files.
         load_kilosort(self, load_all=False): Process Kilosort data.
+        load_waveform(self, spk_idx, spk_range=(-20, 41), sample_range=(0, 30000*300)): Load waveforms from raw data for a given spike index.
         load_waveforms(self, spk_range=(-20, 41), sample_range=(0, 30000*300)): Load waveforms from raw data.
         load_energy_pc1(self, spk_range=(-20, 41), sample_range=(0, 30000*300), max_spike=1e6): Calculate energy and PC1 for spikes.
         load_metrics(self): Calculate various metrics for each unit.
@@ -401,6 +402,64 @@ class Kilosort():
             self.peak = -self.waveform.min(axis=(1, 2))
 
         tprint("Finished waveform (template)")
+    
+    def load_waveform(self, unit_id, spk_range=(-20, 41)):
+        """
+        Returns waveforms from the raw data file for a given cluster index.
+        """
+        if not os.path.exists(self.data_file_path):
+            print(f"Data file {self.data_file_path} does not exist")
+            return
+
+        dtype = np.int16
+        MAX_MEMORY = int(4e9)
+
+        spks = self.frame[unit_id]
+        if spks.size == 0:
+            print(f"No spikes found for cluster {unit_id}")
+            return
+
+        channel_idx = self.waveform_channel[unit_id]
+        n_chan = len(channel_idx)
+        spk_width = spk_range[1] - spk_range[0]
+        n_spk = len(spks)
+        time_idx = np.arange(spk_width)
+
+        sample_range = (0, spks[-1])
+        n_sample = sample_range[1] - sample_range[0]
+        n_sample_per_batch = min(int(MAX_MEMORY // (n_chan * np.dtype(dtype).itemsize)), n_sample)
+        n_batch = int(np.ceil(n_sample / n_sample_per_batch))
+
+        spkwav = np.full((n_spk, spk_width, n_chan), np.nan, dtype=np.float32)
+        batch_starts = np.arange(n_batch) * n_sample_per_batch
+        batch_ends = np.minimum(batch_starts + n_sample_per_batch, sample_range[1])
+
+        spk_batch_idx = np.searchsorted(batch_ends, spks, side='right')
+        for i_batch, (batch_start, batch_end) in enumerate(zip(batch_starts, batch_ends)):
+            tprint(f"Loading waveforms from {self.data_file_path} (batch {i_batch+1}/{n_batch})")
+            data = read_analog(
+                self.data_file_path,
+                sample_range=(batch_start + spk_range[0], batch_end + spk_range[1]),
+                channel_idx=channel_idx
+            )
+            mask = (spk_batch_idx == i_batch)
+            if not np.any(mask):
+                continue
+            spk = spks[mask]
+            spk_no = np.where(mask)[0]
+            starts = spk - batch_start
+            if i_batch == 0:
+                starts += spk_range[0]
+            idx = starts[:, None] + time_idx[None, :]
+            valid = (idx >= 0) & (idx < data.shape[0])
+            wf = np.full((len(spk_no), spk_width, n_chan), np.nan, dtype=np.float32)
+            for i, (row, v) in enumerate(zip(idx, valid)):
+                wf[i][v] = data[row[v]]
+            wf -= wf[:, 0:1, :]
+            spkwav[spk_no] = wf
+            del data, wf
+
+        return spkwav
 
     def load_waveforms(self, spk_range=(-20, 41), max_spike=1000000):
         """
