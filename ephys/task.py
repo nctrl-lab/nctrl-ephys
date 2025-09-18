@@ -102,6 +102,48 @@ class Task():
         self.trial['reward'] = self.trial['iReward'][in_result]
         self.trial['n_trial'] = len(self.trial['result'])
 
+        # space binning
+        self.space_binning()
+    
+    def space_binning(self):
+        if self.task_info['task'] == 'Beacon':
+            delay_bin = np.arange(110, 380, 10)
+            choice_bin = np.arange(410, 1130, 10)
+        elif self.task_info['task'] == 'Alter':
+            delay_bin = np.arange(-240, 180, 10)
+            choice_bin = np.arange(210, 700, 10)
+
+        t = self.vr['timeSecs']
+        x = self.vr['position_x']
+        z = self.vr['position_z']
+
+        # # Remove invalid position
+        # t = t[(x > 1) & (z > 1)]
+        # z = z[(x > 1) & (z > 1)]
+
+        idx_start = np.searchsorted(t, self.trial['timeStartVr'])
+        idx_choice = np.searchsorted(t, self.trial['timeChoiceVr'])
+        idx_result = np.searchsorted(t, self.trial['timeResultVr'])
+
+        time_bin_delay = np.full((self.trial['n_trial'], len(delay_bin)), np.nan)
+        time_bin_choice = np.full((self.trial['n_trial'], len(choice_bin)), np.nan)
+
+        for i in range(self.trial['n_trial']):
+            s0, s1, s2 = idx_start[i], idx_choice[i], idx_result[i]
+            time_bin_delay[i, :] = find_first_crossing(z[s0:s1], t[s0:s1], delay_bin)
+            time_bin_choice[i, :] = find_first_crossing(z[s1:s2], t[s1:s2], choice_bin)
+
+        # Concatenate results
+        time_bin = np.concatenate((
+            self.trial['timeStartVr'][:, np.newaxis], # 1 column - index 0
+            time_bin_delay, # 27 columns
+            self.trial['timeChoiceVr'][:, np.newaxis], # 1 column - index 28
+            time_bin_choice, # 72 columns
+            self.trial['timeResultVr'][:, np.newaxis] # 1 column - index 101
+            ), axis=1) # n_trial x 102
+
+        self.trial['timeBinned'] = time_bin
+
     def parse_pi(self, path):
         from collections import defaultdict
 
@@ -223,6 +265,38 @@ class Task():
         plt.xlabel('Trial number')
         plt.ylabel('Performance')
         plt.show()
+
+def find_first_crossing(x, t, x_bins):
+    """
+    Find the first crossing of a line with a given slope.
+
+    Parameters
+    ----------
+    x : array-like
+        The position coordinates of the line.
+    t : array-like
+        The time coordinates of the line.
+    x_bins : array-like
+        The position bins to find the first crossing of.
+
+    Returns
+    -------
+    result : array-like
+        The time of the first crossing of the line with the given position bins.
+    """
+    x_diff = np.diff(x)
+    t_diff = np.diff(t)
+    x_prev = x[:-1]
+    t_prev = t[:-1]
+
+    result = np.full_like(x_bins, np.nan)
+    for j, b in enumerate(x_bins):
+        crossings = (x_prev < b) & (x_prev + x_diff >= b) & (x_diff > 0)
+        if np.any(crossings):
+            idx = np.argmax(crossings)
+            t_frac = (b - x_prev[idx]) / x_diff[idx]
+            result[j] = t_prev[idx] + t_frac * t_diff[idx]
+    return result
 
 if __name__ == "__main__":
     path = finder(path='C:\SGL_DATA', pattern='.txt$')
