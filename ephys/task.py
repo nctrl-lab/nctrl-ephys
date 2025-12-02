@@ -4,18 +4,18 @@ import json
 import numpy as np
 
 from .spike import smooth
-from .utils import finder, savemat_safe, rollover_recovery
+from .utils import finder, savemat_safe, rollover_recovery, file_reorder
 
 
-class Task():
+class Task:
     def __init__(self, path=None, task_type='unity'):
         if path is None:
-            if task_type == 'unity':
-                path = finder(folder=False, multiple=False, pattern=r'.json$')
-            elif task_type == 'pi':
-                path = finder(folder=False, multiple=False, pattern=r'.txt$')
-        
+            pattern = r'.json$' if task_type == 'unity' else r'.txt$'
+            path = finder(folder=False, multiple=True, pattern=pattern)
+            if path and len(path) > 1:
+                path = file_reorder(path)
         self.task_path = path
+        self.n_file = len(path)
         self.task_type = task_type
         self.load(path, task_type)
 
@@ -23,247 +23,322 @@ class Task():
         path = path or self.task_path
         task_type = task_type or self.task_type
 
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"File {path} does not exist")
-        
-        if task_type is None:
-            raise ValueError("Task type is required")
+        parsers = {'unity': self.parse_unity, 'pi': self.parse_pi}
+        if task_type not in parsers:
+            raise ValueError(f"Unsupported task type: {task_type}")
 
-        if task_type == 'unity':
-            self.parse_unity(path)
-        elif task_type == 'pi':
-            self.parse_pi(path)
-    
+        for file_path in path:
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"File {file_path} does not exist")
+            parsers[task_type](file_path)
+        
+
     def parse_unity(self, path):
         with open(path) as f:
             data = json.load(f)
+        task_time = os.path.getmtime(path)
 
-        self.task_time = os.path.getmtime(path)
-        
+        def get_first(key):
+            for x in data:
+                if key in x: return x
+            raise KeyError(f"Field {key} not found in data.")
+
         info_dict = {
-            "monitor_info": next(x for x in data if "refreshRateHz" in x),
-            "task_info": next(x for x in data if "animalName" in x),
-            "task_parameter": next(x for x in data if "logTreadmill" in x)
+            "monitor_info": get_first("refreshRateHz"),
+            "task_info": get_first("animalName"),
+            "task_parameter": get_first("logTreadmill"),
         }
-        self.__dict__.update(info_dict)
-        
-        self.log_info = data[-1]
+        log_info = data[-1]
 
         vr_data = [x for x in data if "position" in x]
-        self.vr = {key: [] for key in vr_data[0].keys() if key != 'position'}
-        self.vr['position_x'] = []
-        self.vr['position_y'] = []
-        self.vr['position_z'] = []
-        
+        vkeys = [k for k in vr_data[0] if k != 'position']
+        vr_dict = {key: [] for key in vkeys}
+        vr_dict.update({'position_x': [], 'position_y': [], 'position_z': []})
+
         for item in vr_data:
+            pos = item.get('position', None)
+            if pos is not None:
+                vr_dict['position_x'].append(pos.get('x', np.nan))
+                vr_dict['position_y'].append(pos.get('y', np.nan))
+                vr_dict['position_z'].append(pos.get('z', np.nan))
             for key, value in item.items():
-                if key == 'position':
-                    self.vr['position_x'].append(value['x'])
-                    self.vr['position_y'].append(value['y'])
-                    self.vr['position_z'].append(value['z'])
-                elif key == 'events':
-                    self.vr[key].append(value if value else '')
-                else:
-                    self.vr[key].append(value)
-        
-        for key, value in self.vr.items():
-            if key == 'events':
-                self.vr[key] = np.array(value, dtype=object)
-            elif key == 'position':
-                self.vr[key] = np.array(value)
-            else:
-                self.vr[key] = np.array(value, dtype=np.float64)
+                if key == "events":
+                    vr_dict[key].append(value if value else '')
+                elif key != 'position':
+                    vr_dict[key].append(value)
+
+        for key in vr_dict:
+            arr_type = object if key == 'events' else np.float64
+            vr_dict[key] = np.array(vr_dict[key], dtype=arr_type)
 
         trial_data = [x for x in data if "iState" in x]
-        self.trial = {col: [] for col in trial_data[0].keys()}
-        for item in trial_data:
-            for key, value in item.items():
-                self.trial[key].append(value)
-        
-        for key, value in self.trial.items():
-            self.trial[key] = np.array(value)
+        trial_keys = trial_data[0].keys()
+        trial_dict = {k: np.array([item[k] for item in trial_data]) for k in trial_keys}
 
-        # find the last iState 4 or 5
-        in_result = (self.trial['iState'] == 4) | (self.trial['iState'] == 5)
+        # Only keep up to and including the last result trial
+        in_result = (trial_dict['iState'] == 4) | (trial_dict['iState'] == 5)
         i_end = np.where(in_result)[0][-1]
-        for key, value in self.trial.items():
-            self.trial[key] = value[:i_end+1]
+        trial_dict = {k: v[:i_end+1] for k,v in trial_dict.items()}
+
+        iState = trial_dict['iState']
+        trial_dict['timeStartVr']   = trial_dict['timeSecs'][iState == 2]
+        trial_dict['timeChoiceVr']  = trial_dict['timeSecs'][iState == 3]
+        trial_dict['timeSuccessVr'] = trial_dict['timeSecs'][iState == 4]
+        trial_dict['timeFailVr']    = trial_dict['timeSecs'][iState == 5]
+
+        result_mask = (iState == 4) | (iState == 5)
+        trial_dict['timeResultVr'] = trial_dict['timeSecs'][result_mask]
+        trial_dict['cue']    = trial_dict['cChoice'][result_mask]
+        trial_dict['choice'] = trial_dict['iChoice'][result_mask]
+        trial_dict['result'] = 5 - trial_dict['iState'][result_mask]
+        trial_dict['reward'] = trial_dict['iReward'][result_mask]
         
-        self.trial['timeStartVr'] = self.trial['timeSecs'][self.trial['iState'] == 2]
-        self.trial['timeChoiceVr'] = self.trial['timeSecs'][self.trial['iState'] == 3]
-        self.trial['timeSuccessVr'] = self.trial['timeSecs'][self.trial['iState'] == 4]
-        self.trial['timeFailVr'] = self.trial['timeSecs'][self.trial['iState'] == 5]
+        n_trial = min(len(trial_dict['timeStartVr']), len(trial_dict['timeChoiceVr']), len(trial_dict['timeResultVr']))
+        trial_dict = {k: v[:n_trial] for k,v in trial_dict.items()}
+        trial_dict['n_trial'] = n_trial
 
-        in_result = (self.trial['iState'] == 4) | (self.trial['iState'] == 5)
-        self.trial['timeResultVr'] = self.trial['timeSecs'][in_result]
-        self.trial['cue'] = self.trial['cChoice'][in_result]
-        self.trial['choice'] = self.trial['iChoice'][in_result]
-        self.trial['result'] = 5 - self.trial['iState'][in_result]
-        self.trial['reward'] = self.trial['iReward'][in_result]
-        self.trial['n_trial'] = len(self.trial['result'])
+        multi_save = (getattr(self, 'n_file', 1) > 1)
+        def save_attr(attr, val):
+            # assign as list if multi; append or make new list as needed
+            if multi_save:
+                if not hasattr(self, attr) or not isinstance(getattr(self, attr), list):
+                    setattr(self, attr, [])
+                getattr(self, attr).append(val)
+            else:
+                setattr(self, attr, val)
 
-        # space binning
-        self.space_binning()
-    
-    def space_binning(self):
-        if self.task_info['task'] == 'Beacon':
-            delay_bin = np.arange(110, 380, 10)
-            choice_bin = np.arange(410, 1130, 10)
-        elif self.task_info['task'] == 'Alter':
+        save_attr('task_time', task_time)
+        save_attr('monitor_info', info_dict["monitor_info"])
+        save_attr('task_info', info_dict["task_info"])
+        save_attr('task_parameter', info_dict["task_parameter"])
+        save_attr('log_info', log_info)
+
+        trial_dict['timeBinned'] = self.space_binning_for(trial_dict, vr_dict)
+        save_attr('vr', vr_dict)
+        save_attr('trial', trial_dict)
+
+    def space_binning_for(self, trial, vr):
+        task_info = self.task_info
+        if isinstance(task_info, list):
+            if len(task_info) == 0:
+                raise ValueError("task_info list is empty")
+            task = task_info[-1]['task']
+        else:
+            task = task_info['task']
+
+        if task == 'Beacon':
+            delay_bin = np.arange(310, 580, 10)
+            choice_bin = np.arange(610, 1330, 10)
+        elif task == 'Alter':
             delay_bin = np.arange(-240, 180, 10)
             choice_bin = np.arange(210, 700, 10)
+        else:
+            raise ValueError("Unknown task type for binning.")
 
-        t = self.vr['timeSecs']
-        x = self.vr['position_x']
-        z = self.vr['position_z']
+        t = vr['timeSecs']
+        z = vr['position_z']
+        n_trial = trial['n_trial']
 
-        # # Remove invalid position
-        # t = t[(x > 1) & (z > 1)]
-        # z = z[(x > 1) & (z > 1)]
+        idx_start  = np.searchsorted(t, trial['timeStartVr'])
+        idx_choice = np.searchsorted(t, trial['timeChoiceVr'])
+        idx_result = np.searchsorted(t, trial['timeResultVr'])
 
-        idx_start = np.searchsorted(t, self.trial['timeStartVr'])
-        idx_choice = np.searchsorted(t, self.trial['timeChoiceVr'])
-        idx_result = np.searchsorted(t, self.trial['timeResultVr'])
+        time_bin_delay = np.full((n_trial, len(delay_bin)), np.nan)
+        time_bin_choice = np.full((n_trial, len(choice_bin)), np.nan)
 
-        time_bin_delay = np.full((self.trial['n_trial'], len(delay_bin)), np.nan)
-        time_bin_choice = np.full((self.trial['n_trial'], len(choice_bin)), np.nan)
-
-        for i in range(self.trial['n_trial']):
+        for i in range(n_trial):
             s0, s1, s2 = idx_start[i], idx_choice[i], idx_result[i]
-            time_bin_delay[i, :] = find_first_crossing(z[s0:s1], t[s0:s1], delay_bin)
-            time_bin_choice[i, :] = find_first_crossing(z[s1:s2], t[s1:s2], choice_bin)
+            time_bin_delay[i] = find_first_crossing(z[s0:s1], t[s0:s1], delay_bin)
+            time_bin_choice[i] = find_first_crossing(z[s1:s2], t[s1:s2], choice_bin)
 
-        # Concatenate results
-        time_bin = np.concatenate((
-            self.trial['timeStartVr'][:, np.newaxis], # 1 column - index 0
-            time_bin_delay, # 27 columns
-            self.trial['timeChoiceVr'][:, np.newaxis], # 1 column - index 28
-            time_bin_choice, # 72 columns
-            self.trial['timeResultVr'][:, np.newaxis] # 1 column - index 101
-            ), axis=1) # n_trial x 102
-
-        self.trial['timeBinned'] = time_bin
+        return np.concatenate(
+            (trial['timeStartVr'][:, None], time_bin_delay, trial['timeChoiceVr'][:, None],
+             time_bin_choice, trial['timeResultVr'][:, None]), axis=1)
 
     def parse_pi(self, path):
         from collections import defaultdict
-
-        self.task_time = os.path.getmtime(path)
-
+        task_time = os.path.getmtime(path)
         with open(path) as f:
-            data = f.readlines()
+            data = [line.strip() for line in f if not line.startswith("0,")]
 
-        parsed_data = [(int(c), int(t), list(map(int, vs)))
-                       for line in data
-                       if not line.startswith("0,")
-                       for c, t, *vs in [line.strip().split(",")]]
-
-        cmds, times, values = zip(*parsed_data)
-        times = rollover_recovery(times) / 1e6 # seconds
+        # Parse all lines efficiently
+        cmds, times, values = [], [], []
+        for line in data:
+            toks = line.split(",")
+            cmds.append(int(toks[0]))
+            times.append(int(toks[1]))
+            values.append(list(map(int, toks[2:])))
+        times = rollover_recovery(times) / 1e6  # seconds
 
         data_types = defaultdict(list)
-
         for cmd, t, vs in zip(cmds, times, values):
             if 30 <= cmd < 40:
                 data_types['vr'].append([t] + vs)
             elif 40 <= cmd < 50:
-                data_types['sync'].append([cmd-40, t] + vs)
+                data_types['sync'].append([cmd - 40, t] + vs)
             elif 60 <= cmd < 70:
-                data_types['trial'].append([cmd-60, t] + vs)
+                data_types['trial'].append([cmd - 60, t] + vs)
             elif 70 <= cmd < 80:
-                data_types['laser'].append([cmd-70, t])
+                data_types['laser'].append([cmd - 70, t])
             elif 80 <= cmd < 90:
                 data_types['reward'].append(t)
+        to_array = lambda x: np.array(x) if len(x) else np.empty((0,))
 
         N_PULSE_PER_CM = 8.1487
-        vr_data, sync_data, trial_data, laser_data, reward_data = map(np.array, (data_types['vr'], data_types['sync'], data_types['trial'], data_types['laser'], data_types['reward']))
+        vr_data, sync_data, trial_data, laser_data, reward_data = map(
+            to_array, [data_types['vr'], data_types['sync'],
+                       data_types['trial'], data_types['laser'],
+                       data_types['reward']]
+        )
 
-        if len(vr_data) > 0:
-            self.vr = {
-                "time": vr_data[:, 0],
-                "position_raw": rollover_recovery(vr_data[:, 1])
-            }
-            self.vr['position'] = self.vr['position_raw'] / N_PULSE_PER_CM
-            self.vr['speed'] = np.concatenate(([0], np.ediff1d(self.vr['position']) / np.ediff1d(self.vr['time']))) # cm/s
-            self.vr['speed_conv'] = smooth(self.vr['speed'], axis=0, sigma=5)
+        multi_save = (getattr(self, 'n_file', 1) > 1)
+        def save_attr(attr, val):
+            if multi_save:
+                if not hasattr(self, attr) or not isinstance(getattr(self, attr), list):
+                    setattr(self, attr, [])
+                getattr(self, attr).append(val)
+            else:
+                setattr(self, attr, val)
 
-        if len(sync_data) > 0:
-            self.trial_sync = {
-                "time_task": sync_data[:, 1],
-                "type_task": sync_data[:, 0]
-            }
+        vr_dict = sync_dict = trial_dict = laser_dict = reward_dict = None
+        if vr_data.size:
+            pos_raw = rollover_recovery(vr_data[:,1])
+            time_vec = vr_data[:,0]
+            position = pos_raw / N_PULSE_PER_CM
+            dtime = np.diff(time_vec)
+            ds = np.diff(position)
+            speed = np.concatenate(([0], ds / dtime))
+            vr_dict = dict(
+                time=time_vec,
+                position_raw=pos_raw,
+                position=position,
+                speed=speed,
+                speed_conv=smooth(speed, axis=0, sigma=5)
+            )
+        if sync_data.size:
+            sync_dict = dict(time_task=sync_data[:,1], type_task=sync_data[:,0])
+        if trial_data.size:
+            td = trial_data
+            trial_dict = dict(
+                time=td[1:,1],
+                state=td[1:,2],
+                i_trial=td[1:,3]
+            )
+            s = trial_dict['state']
+            trial_dict['timeStartVr'] = trial_dict['time'][s == 1]
+            trial_dict['timeEndVr'] = trial_dict['time'][s == 2]
+            trial_dict['timeITISuccessVr'] = trial_dict['time'][s == 3]
+            trial_dict['timeITIFailVr'] = trial_dict['time'][s == 4]
+            in_result = (s == 3) | (s == 4)
+            trial_dict['result'] = 4 - s[in_result]
+            trial_dict['n_trial'] = len(trial_dict['result'])
+        if laser_data.size:
+            laser_dict = dict(time=laser_data[:,1], type=laser_data[:,0])
+        if reward_data.size:
+            reward_dict = dict(time=reward_data)
 
-        if len(trial_data) > 0:
-            self.trial = {
-                "time": trial_data[1:, 1],
-                "state": trial_data[1:, 2],
-                "i_trial": trial_data[1:, 3]
-            }
-            # Successful trial: 1 -> 3
-            # Failed trial: 1 -> 2 -> 4
-            self.trial['timeStartVr'] = self.trial['time'][self.trial['state'] == 1]
-            self.trial['timeEndVr'] = self.trial['time'][self.trial['state'] == 2]
-            self.trial['timeITISuccessVr'] = self.trial['time'][self.trial['state'] == 3]
-            self.trial['timeITIFailVr'] = self.trial['time'][self.trial['state'] == 4]
-            self.trial['result'] = 4 - self.trial['state'][(self.trial['state'] == 3) | (self.trial['state'] == 4)]
-            self.trial['n_trial'] = len(self.trial['result'])
+        save_attr('task_time', task_time)
+        save_attr('vr', vr_dict)
+        save_attr('trial_sync', sync_dict)
+        save_attr('trial', trial_dict)
+        save_attr('laser', laser_dict)
+        save_attr('reward', reward_dict)
 
-        if len(laser_data) > 0:
-            self.laser = {
-                "time": laser_data[:, 1],
-                "type": laser_data[:, 0]
-            }
-
-        if len(reward_data) > 0:
-            self.reward = {
-                "time": reward_data
-            }
-        
     def save(self, path=None):
         if path is None:
             path = finder(folder=False, multiple=False, pattern=r'.mat$')
-            if path is None:
+            if path is None and hasattr(self, "task_path"):
                 print("No path provided. Saving .mat file in the current directory.")
                 path = self.task_path.replace('.txt', '.mat')
-
-        data = {key: value for key, value in self.__dict__.items() if not key.startswith('__')}
+        # Only export non-private attributes
+        data = {k: v for k, v in self.__dict__.items() if not k.startswith('__')}
         savemat_safe(path, data)
-    
+
     def summary(self):
         print(f"Task type: {self.task_type}")
+        print(f"n_file: {getattr(self, 'n_file', 1)}")
         print(f"Task path: {self.task_path}")
-        print(f"Task time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.task_time))}")
 
-        if self.task_type == 'pi':
-            print(f"Task duration: {self.vr['time'][-1] - self.vr['time'][0]:.2f} s")
-            print(f"VR data: {len(self.vr['time'])}")
-            print(f"Sync data: {len(self.trial_sync['time_task'])}")
-            print(f"Trial data:")
-            print(f"    n_trial: {self.trial['n_trial']}")
-            print(f"    performance: {np.mean(self.trial['result'] == 1) * 100:.2f}%")
-            print(f"    reward: {len(self.reward['time']) * 0.02:.2f} mL (n={len(self.reward['time'])})")
-
-        elif self.task_type == 'unity':
-            print(f"Task duration: {self.vr['timeSecs'][-1] - self.vr['timeSecs'][0]:.2f} s")
-            print(f"VR data: {len(self.vr['timeSecs'])}")
-            print(f"Trial data:")
-            print(f"    n_trial: {self.trial['n_trial']}")
-            print(f"    performance: {np.mean(self.trial['result'] == 1) * 100:.2f}%")
-            print(f"    reward: {self.trial['reward'][-1] * 0.001:.2f} mL")
+        for i in range(self.n_file):
+            multi = self.n_file > 1
+            vr = self.vr[i] if multi else self.vr
+            trial = self.trial[i] if multi else self.trial
+            
+            if self.task_type == 'pi':
+                trial_sync = self.trial_sync[i] if multi else self.trial_sync
+                reward = self.reward[i] if multi else self.reward
+                print(f"\nBlock {i+1}:")
+                print(f"Task duration: {vr['time'][-1] - vr['time'][0]:.2f} s")
+                print(f"VR data: {len(vr['time'])}")
+                print(f"Sync data: {len(trial_sync['time_task'])}")
+                print("Trial data:")
+                print(f"    n_trial: {trial['n_trial']}")
+                perf = np.mean(trial['result'] == 1) * 100 if trial['n_trial'] else 0
+                print(f"    performance: {perf:.2f}%")
+                n_reward = len(reward['time'])
+                print(f"    reward: {n_reward * 0.02:.2f} mL (n={n_reward})")
+            elif self.task_type == 'unity':
+                print(f"\nBlock {i+1}:")
+                print(f"Task duration: {vr['timeSecs'][-1] - vr['timeSecs'][0]:.2f} s")
+                print(f"VR data: {len(vr['timeSecs'])}")
+                print("Trial data:")
+                print(f"    n_trial: {trial['n_trial']}")
+                perf = np.mean(trial['result'] == 1) * 100 if trial['n_trial'] else 0
+                print(f"    performance: {perf:.2f}%")
+                print(f"    reward: {trial['reward'][-1] * 0.001:.2f} mL")
 
     def plot(self):
         import matplotlib.pyplot as plt
 
+        multi = getattr(self, 'n_file', 1) > 1
+        n_blocks = self.n_file if hasattr(self, 'n_file') else (len(self.trial) if isinstance(self.trial, list) else 1)
+
+        if multi or (isinstance(self.trial, list) and len(self.trial) > 1):
+            # Concatenate results from all blocks
+            all_results = []
+            block_lengths = []
+            for trial in self.trial:
+                result = np.asarray(trial['result'])
+                all_results.append(result)
+                block_lengths.append(len(result))
+            result_cat = np.concatenate(all_results)
+            n_trial = result_cat.size
+            # Block borders are at the trial cumulative lengths (excluding 0 and n_trial)
+            block_edges = np.cumsum([0] + block_lengths)
+            # Avoid first 0, last n_trial (already used for xlim)
+            block_borders = block_edges[1:-1]
+        else:
+            result_cat = np.asarray(self.trial['result'])
+            n_trial = result_cat.size
+            block_borders = []
+
         plt.figure()
-        color = ['lightgray', 'gray']
-        for i in range(2):
-            in_trial = np.where(self.trial['result'] == i)[0]
-            plt.bar(in_trial + 0.5, i * np.ones_like(in_trial) * 0.8 + 0.2, width=1, color=color[i])
-        result_conv = [0] + list(smooth(self.trial['result'], axis=0, mode='full', type='boxcar') / 10)
-        plt.step(np.arange(len(result_conv)), result_conv, color='r')
-        plt.xlim(0, self.trial['n_trial'])
-        plt.ylim(0, 1)
+        colors = ['lightgray', 'gray']
+
+        # Plot correct/incorrect bars
+        for i, color in enumerate(colors):
+            in_trial = np.where(result_cat == i)[0]
+            if in_trial.size > 0:
+                plt.bar(in_trial + 0.5, i * 0.8 + 0.2, width=1, color=color, edgecolor='k', linewidth=0.5)
+
+        # Plot vertical lines at block borders if there are multiple blocks
+        for ix in block_borders:
+            plt.axvline(ix, color='b', linestyle='--', linewidth=1, alpha=0.6, zorder=2)
+
+        # Compute smoothed performance (boxcar/rolling mean over 10 trials)
+        trial_perf = smooth(result_cat, axis=0, mode='full', type='boxcar') / 10
+        result_conv = np.concatenate(([0], trial_perf))
+        plt.step(np.arange(len(result_conv)), result_conv, color='r', where='mid')
+
+        plt.xlim(0, n_trial)
+        plt.ylim(-0.05, 1.05)
         plt.xlabel('Trial number')
         plt.ylabel('Performance')
+        if multi or (isinstance(self.trial, list) and len(self.trial) > 1):
+            plt.title(f'Task Performance Over Trials (Blocks: {n_blocks})')
+        else:
+            plt.title('Task Performance Over Trials')
+        plt.tight_layout()
         plt.show()
 
 def find_first_crossing(x, t, x_bins):
@@ -299,7 +374,7 @@ def find_first_crossing(x, t, x_bins):
     return result
 
 if __name__ == "__main__":
-    path = finder(path='C:\SGL_DATA', pattern='.txt$')
-    task = Task(path=path, task_type='pi')
-    task.plot()
-    # task.save()
+    task = Task()
+    task.summary()
+    # task.plot()
+    task.save()
