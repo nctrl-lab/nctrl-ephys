@@ -127,11 +127,11 @@ class Task:
             task = task_info['task']
 
         if task == 'Beacon':
-            delay_bin = np.arange(310, 580, 10)
-            choice_bin = np.arange(610, 1330, 10)
+            delay_bin = np.arange(310, 580, 10, dtype=float)
+            choice_bin = np.arange(610, 1330, 10, dtype=float)
         elif task == 'Alter':
-            delay_bin = np.arange(-240, 180, 10)
-            choice_bin = np.arange(210, 700, 10)
+            delay_bin = np.arange(-240, 180, 10, dtype=float)
+            choice_bin = np.arange(210, 700, 10, dtype=float)
         else:
             raise ValueError("Unknown task type for binning.")
 
