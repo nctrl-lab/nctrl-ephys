@@ -315,14 +315,15 @@ class VRec:
             f"{self.n_sample} samples @ {self.sample_rate:g} Hz = {self.duration:.1f} s",
         ]
 
-        for channel, pulse in (self.data or {}).items():
-            duration = (pulse[:, 1] - pulse[:, 0]).mean() if len(pulse) else 0
-            out.append(f"    {channel}: {len(pulse)} pulses, duration: {duration:.3f} s")
+        if self.data is not None:
+            for channel, pulse in zip(self.channels, self.data):
+                duration = (pulse[:, 1] - pulse[:, 0]).mean() if len(pulse) else 0
+                out.append(f"    {channel}: {len(pulse)} pulses, duration: {duration:.3f} s")
 
         if self.trial:
             out.append(
-                f"trial: {self.trial['nTrialNidq']} trials, "
-                f"{self.trial['resultNidq'].sum()} rewarded"
+                f"trial: {self.trial['nTrial']} trials, "
+                f"{self.trial['result'].sum()} rewarded"
             )
             out.append(f"    {list(self.trial)}")
         return "\n".join(out)
@@ -355,7 +356,8 @@ class VRec:
         """
         Pulse on/off times (s) per channel, as an (n_pulse, 2) array.
 
-        self.data[channel] = np.stack([onsets, offsets], axis=1)
+        self.data[c] = np.stack([onsets, offsets], axis=1) for self.channels[c],
+        empty for a channel that never went high, so the two stay index-aligned.
 
         Args:
             threshold: logic level (V) separating low from high.
@@ -369,7 +371,7 @@ class VRec:
         self.trial = None
         self.t0 = 0.0
 
-        data, dropped = {}, {}
+        data, dropped = np.empty(self.n_channel, dtype=object), {}
         for c, channel in enumerate(self.channels):
             high = np.zeros(len(self.data_raw) + 2, dtype=bool)
             np.greater(self.data_raw[:, c], threshold / VOLT_PER_BIT, out=high[1:-1])
@@ -381,7 +383,7 @@ class VRec:
             is_good = (pulse[:, 1] - pulse[:, 0]) >= jitter
             if not is_good.all():
                 dropped[channel] = int((~is_good).sum())
-            data[channel] = pulse[is_good]
+            data[c] = pulse[is_good]
 
         if dropped:
             tprint(
@@ -390,19 +392,26 @@ class VRec:
             )
 
         # Realign by the first frame onset (AI 1) to match the PrairieView XML frame table
-        if len(data.get("AI 1", ())):
-            self.t0 = data["AI 1"][0, 0]
-            for channel in self.channels:
-                data[channel] -= self.t0
+        frame = self.channels.index("AI 1") if "AI 1" in self.channels else None
+        if frame is not None and len(data[frame]):
+            self.t0 = data[frame][0, 0]
+            for pulse in data:
+                pulse -= self.t0
 
         self.data = data
 
-    def frame2time(self, idx):
-        """Convert a frame index to time (s) using the frame table."""
+    def pulse(self, channel):
+        """Pulses of a named channel, as an (n_pulse, 2) array."""
         if self.data is None:
             raise ValueError("Data are not loaded")
+        if channel not in self.channels:
+            raise KeyError(f"No {channel} among {self.channels}")
 
-        time_frame = np.mean(self.data["AI 1"], axis=1) # midpoint of each frame
+        return self.data[self.channels.index(channel)]
+
+    def frame2time(self, idx):
+        """Convert a frame index to time (s) using the frame table."""
+        time_frame = np.mean(self.pulse("AI 1"), axis=1) # midpoint of each frame
         return time_frame[idx]
 
     def time2frame(self, t):
@@ -413,10 +422,7 @@ class VRec:
                        |
                        t --> (1)
         """
-        if self.data is None:
-            raise ValueError("Data are not loaded")
-
-        return np.searchsorted(self.data["AI 1"][:, 0], t, side="right") - 1
+        return np.searchsorted(self.pulse("AI 1")[:, 0], t, side="right") - 1
 
     def parse_task(self, task="vr", threshold=2.5):
         """
@@ -432,7 +438,7 @@ class VRec:
         if task != "vr":
             raise ValueError(f"Unsupported task type: {task}")
 
-        delay, choice, reward = (self.data[c] for c in ("AI 3", "AI 4", "AI 6"))
+        delay, choice, reward = (self.pulse(c) for c in ("AI 3", "AI 4", "AI 6"))
         n_trial = min(len(delay), len(choice))
 
         time_start, time_cue = delay[:n_trial, 0], delay[:n_trial, 1]
@@ -451,14 +457,14 @@ class VRec:
         result = np.bincount(result_index[in_task], minlength=n_trial)
 
         self.trial = {
-            "nTrialNidq": n_trial,
-            "timeStartNidq": time_start, # delay start
-            "timeCueNidq": time_cue, # cue start
-            "timeChoiceNidq": time_choice, # choice start (reward given)
-            "timeEndNidq": time_end, # iti end (next trial delay start)
-            "cueNidq": cue.astype(np.int8),
-            "choiceNidq": choice.astype(np.int8),
-            "resultNidq": result.astype(np.int8),
+            "nTrial": n_trial,
+            "timeStart": time_start, # delay start
+            "timeCue": time_cue, # cue start
+            "timeChoice": time_choice, # choice start (reward given)
+            "timeEnd": time_end, # iti end (next trial delay start)
+            "cue": cue.astype(np.int8),
+            "choice": choice.astype(np.int8),
+            "result": result.astype(np.int8),
         }
 
         tprint(
@@ -485,7 +491,7 @@ class VRec:
             tprint("Nothing to save")
             return
 
-        savemat_safe(path, data)
+        savemat_safe(path, {"vrec": data})
 
 if __name__ == "__main__":
     fd = "/home/kimd/Downloads"

@@ -159,7 +159,10 @@ spike.plot() # this will generate an interactive raster and PSTH figure to brows
 3. Extract the voltage recording and the behavior (`ephys vrec`)
     - This turns every channel into on/off pulse times, then parses the trial structure of the VR task (`--task vr`, the default).
     - All times are realigned so that the first imaging frame onset (AI 1) is t = 0, which puts them on the same clock as the PrairieView frame table.
-    - The result is saved to `FOLDER_data.mat` with `channels`, `data` (per channel, an `(n_pulse, 2)` array of on/off times in seconds), and `trial`. Re-running merges into an existing `.mat` after asking to overwrite.
+    - The result is saved to `FOLDER_data.mat` under a single `vrec` struct, so nothing collides with the `trial` that `ephys task` writes into the same file. Re-running replaces `vrec` after asking to overwrite.
+        - `vrec.channels`: the channel names, as a cell array.
+        - `vrec.data`: a cell array in the same order, each cell an `(n_pulse, 2)` array of on/off times in seconds. A channel that never went high gets an empty array, so the two stay index-aligned and `vrec.data{c}` always belongs to `vrec.channels{c}`.
+        - `vrec.trial`: the parsed trials, absent when the task is not parsed.
     - The TTL channel map the VR task expects:
         - AI 1: 2p imaging frame, high once per frame
         - AI 2: task start (on) and end (off)
@@ -169,6 +172,7 @@ spike.plot() # this will generate an interactive raster and PSTH figure to brows
         - AI 6: water reward
     - Crosstalk puts sub-millisecond pulses on otherwise idle lines, and each one would be counted as a phantom trial or reward. Pulses shorter than `jitter` (2 ms by default) are dropped, and the dropped count is reported per channel. Real TTLs here are 31 ms and longer, so the margin is wide; retune per rig with `VRec.parse_data(jitter=...)` and then re-run `parse_task()`.
 4. Load the data using the `ephys.ophys.Ophys` and `ephys.ophys.VRec` classes.
+    - `VRec.data` is indexed like `VRec.channels`; `VRec.pulse('AI 3')` looks a line up by name instead.
     - `VRec.frame2time(idx)` gives the time of an imaging frame, and `VRec.time2frame(t)` gives the frame a task event falls in. Use these to put imaging and behavior on one index.
 
 ```python
