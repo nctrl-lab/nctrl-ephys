@@ -180,31 +180,24 @@ def savemat_safe(fn, data):
     if not isinstance(data, dict):
         raise ValueError("data must be a dictionary")
 
-    try:
-        if os.path.exists(fn):
-            data_old = sio.loadmat(fn, simplify_cells=True)
-            if not isinstance(data_old, dict):
-                raise ValueError(f"File {fn} is not a dictionary")
-
-            overlap = False
-            for key in data.keys():
-                if key in data_old:
-                    overlap = True
-                    break
-            
-            if overlap and not confirm(f"Data {key} already exists. Do you want to overwrite it?"):
+    data_old = {}
+    if os.path.exists(fn):
+        try:
+            data_old = {k: v for k, v in sio.loadmat(fn, simplify_cells=True).items()
+                        if not k.startswith('__')}
+        except Exception as e:
+            print(f"Error loading file {fn}: {e}")
+            if not confirm(f"Could not read {fn}. Do you want to overwrite it?"):
                 return
-            
-            # merge data
-            data_old.update(data)
-        else:
-            data_old = data
-        
-        sio.savemat(fn, data_old, oned_as='column')
-    except Exception as e:
-        print(f"Error {'loading or ' if os.path.exists(fn) else ''}saving file {fn}: {str(e)}")
-        if locals().get('data_old', None) is not None:
-            sio.savemat(fn, data_old, oned_as='column')
+            data_old = {}
+
+        overlap = [key for key in data if key in data_old]
+        if overlap and not confirm(f"Data {', '.join(overlap)} already exists. Do you want to overwrite it?"):
+            return
+
+    # merge data
+    data_old.update(data)
+    sio.savemat(fn, data_old, oned_as='column')
 
 
 def sync(time_a, time_b, threshold=0.010):

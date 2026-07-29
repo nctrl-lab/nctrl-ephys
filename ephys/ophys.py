@@ -459,13 +459,11 @@ class VRec:
                 print("No path provided. Saving .mat file in the current directory.")
                 path = os.path.join(fd, fn)
 
-        data = {}
-        if hasattr(self, 'channels'):
-            data['channels'] = self.channels
-        if hasattr(self, 'data'):
-            data['data'] = self.data
-        if hasattr(self, 'trial'):
-            data['trial'] = self.trial
+        data = {key: getattr(self, key, None) for key in ('channels', 'data', 'trial')}
+        data = {key: value for key, value in data.items() if value is not None}
+        if not data:
+            tprint("Nothing to save")
+            return
 
         savemat_safe(path, data)
 
