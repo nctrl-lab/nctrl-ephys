@@ -171,12 +171,18 @@ spike.plot() # this will generate an interactive raster and PSTH figure to brows
         - AI 5: direction, read during the cue and the choice window (1: left, 2: right)
         - AI 6: water reward
     - Crosstalk puts sub-millisecond pulses on otherwise idle lines, and each one would be counted as a phantom trial or reward. Pulses shorter than `jitter` (2 ms by default) are dropped, and the dropped count is reported per channel. Real TTLs here are 31 ms and longer, so the margin is wide; retune per rig with `VRec.parse_data(jitter=...)` and then re-run `parse_task()`.
-4. Load the data using the `ephys.ophys.Ophys` and `ephys.ophys.VRec` classes.
+4. Run [suite2p](https://github.com/MouseLand/suite2p) on the images, then collect its output (`ephys s2p`)
+    - This reads `F`, `Fneu`, `spks`, `stat`, `iscell` and `ops` from a `suite2p/planeN` folder, and adds the neuropil-corrected trace (`F - neucoeff * Fneu`, `--neucoeff 0.7` by default) and dF/F over suite2p's own maximin baseline.
+    - Everything is saved to the same `FOLDER_data.mat` under a `suite2p` struct, next to `vrec`. `ops` keeps the settings, the summary images and the rigid offsets; the registration QC (`regPC` alone is ~57 MB) is left out.
+    - **Check the frame rate suite2p ran with.** It is whatever was typed into the GUI, and it sets the deconvolution kernel and the baseline window. Compare it with the rate `ephys ophys` reports and pass `--fs` to override it; the override is printed in red so a wrong rate does not pass unnoticed. `F` and `Fneu` do not depend on it, but `spks` does.
+    - dF/F is left as `nan` for an ROI whose baseline is not positive, which happens when the ROI is no brighter than the neuropil around it. Read `corrected` for those instead of trusting a ratio to a near-zero baseline.
+5. Load the data using the `ephys.ophys.Ophys`, `ephys.ophys.VRec` and `ephys.ophys.Suite2p` classes.
     - `VRec.data` is indexed like `VRec.channels`; `VRec.pulse('AI 3')` looks a line up by name instead.
     - `VRec.frame2time(idx)` gives the time of an imaging frame, and `VRec.time2frame(t)` gives the frame a task event falls in. Use these to put imaging and behavior on one index.
+    - `Suite2p.cell` is the boolean mask of the ROIs the classifier accepted, so `s2p.dff[s2p.cell]` is the traces you usually want.
 
 ```python
-from ephys.ophys import Ophys, VRec
+from ephys.ophys import Ophys, VRec, Suite2p
 
 path = '/path/to/20260711_DIT09_4X-136'
 ophys = Ophys(path)
@@ -185,6 +191,10 @@ print(ophys)
 vrec = VRec(path, task='vr')
 print(vrec)
 vrec.save()
+
+s2p = Suite2p(path, fs=ophys.frame_rate) # suite2p ran at the wrong rate here
+print(s2p)
+s2p.save()
 ```
 
 ```python
@@ -217,7 +227,17 @@ vrec
         AI 7: 0 pulses, duration: 0.000 s
         AI 8: 0 pulses, duration: 0.000 s
     trial: 125 trials, 89 rewarded
-        ['nTrialNidq', 'timeStartNidq', 'timeCueNidq', 'timeChoiceNidq', 'timeEndNidq', 'cueNidq', 'choiceNidq', 'resultNidq']
+        ['nTrial', 'timeStart', 'timeCue', 'timeChoice', 'timeEnd', 'cue', 'choice', 'result']
+s2p
+    Suite2p: plane0
+    102 ROIs (45 cells), 35004 frames @ 15.0685 Hz = 2323.0 s
+        F: (102, 35004)
+        Fneu: (102, 35004)
+        spks: (102, 35004)
+        corrected: (102, 35004)
+        dff: (102, 35004) (undefined for 66 ROIs)
+        neucoeff: 0.7, tau: 1
+        fs overridden: 10 -> 15.0685 Hz
 ```
 
 - AI 1 usually carries a few more pulses than there are saved frames: PrairieView keeps the frame clock running for a moment past the last frame it writes. The extra pulses sit at the end, so frame indices still line up.

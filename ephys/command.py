@@ -128,3 +128,13 @@ def vrec(path, task):
 def ophys(path):
     ophys = Ophys(path)
     print(ophys)
+
+@main.command()
+@click.option('--path', type=click.Path(exists=True), default=None)
+@click.option('--fs', type=float, default=None, help='Frame rate (Hz), when the one suite2p ran with was wrong')
+@click.option('--neucoeff', type=float, default=0.7)
+def s2p(path, fs, neucoeff):
+    from .ophys import Suite2p
+    suite2p = Suite2p(path, fs=fs, neucoeff=neucoeff)
+    print(suite2p)
+    suite2p.save()

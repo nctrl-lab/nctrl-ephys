@@ -493,6 +493,141 @@ class VRec:
 
         savemat_safe(path, {"vrec": data})
 
+
+class Suite2p:
+    """A reader for the suite2p output of one imaging plane."""
+
+    OPS = (
+        "Ly", "Lx", "fs", "tau", "nframes", "nchannels", "nplanes", "spatscale_pix",
+        "version", "meanImg", "meanImgE", "max_proj", "Vcorr", "refImg",
+        "xoff", "yoff", "badframes", "xrange", "yrange",
+    )
+
+    def __init__(self, path=None, fs=None, neucoeff=0.7):
+        self.fn_stat = finder(path=path, pattern=r"stat\.npy$")
+        if not self.fn_stat:
+            raise FileNotFoundError(f"No suite2p stat.npy found under {path}")
+        self.path = os.path.dirname(self.fn_stat)
+
+        self.load_data()
+
+        self.fs = float(self.ops["fs"] if fs is None else fs)
+        self.neucoeff = neucoeff
+
+        self.parse_data()
+
+    def __repr__(self):
+        out = [
+            f"Suite2p: {os.path.basename(self.path)}",
+            f"{self.n_roi} ROIs ({self.n_cell} cells), {self.n_frame} frames "
+            f"@ {self.fs:g} Hz = {self.duration:.1f} s",
+        ]
+
+        for name in ("F", "Fneu", "spks", "corrected", "dff"):
+            value = getattr(self, name, None)
+            if value is None:
+                continue
+            n_dim = int(np.isnan(value).any(axis=1).sum()) if name == "dff" else 0
+            out.append(
+                f"    {name}: {value.shape}"
+                + (f" (undefined for {n_dim} ROIs)" if n_dim else "")
+            )
+
+        out.append(f"    neucoeff: {self.neucoeff:g}, tau: {self.ops['tau']:g}")
+        if self.fs != self.ops["fs"]:
+            out.append(f"    \033[91mfs overridden: {self.ops['fs']:g} -> {self.fs:g} Hz\033[0m")
+        return "\n".join(out)
+
+    @property
+    def n_roi(self):
+        return len(self.F)
+
+    @property
+    def n_frame(self):
+        return self.F.shape[1]
+
+    @property
+    def n_cell(self):
+        return int(self.cell.sum())
+
+    @property
+    def cell(self):
+        """Boolean mask of the ROIs the classifier accepted."""
+        return self.iscell[:, 0].astype(bool)
+
+    @property
+    def duration(self):
+        """Recording length in seconds."""
+        return self.n_frame / self.fs
+
+    def load_data(self):
+        """Loading the suite2p arrays"""
+        load = lambda fn: np.load(os.path.join(self.path, fn), allow_pickle=True)
+
+        self.F = load("F.npy")
+        self.Fneu = load("Fneu.npy")
+        self.spks = load("spks.npy")
+        self.stat = load("stat.npy")
+        self.iscell = load("iscell.npy")
+        self.ops = load("ops.npy").item()
+        self.corrected = None
+        self.dff = None
+
+        tprint(
+            f"Loaded {os.path.basename(self.path)}: {self.n_roi} ROIs "
+            f"({self.n_cell} cells), {self.n_frame} frames @ {self.ops['fs']:g} Hz"
+        )
+
+    def parse_data(self, win_baseline=60.0, sig_baseline=10.0):
+        """
+        Neuropil-corrected traces and dF/F.
+
+        F0 is suite2p's maximin baseline: smoothed in time, then a running
+        minimum followed by a running maximum over `win_baseline` seconds.
+
+        Notes:
+            - An ROI no brighter than the neuropil around it has a baseline at or
+              below zero once the neuropil is subtracted, and a ratio to it means
+              nothing. Those samples are left as nan rather than flooring F0,
+              which would otherwise report dF/F in the thousands. Read
+              `corrected` for them instead.
+        """
+        from scipy.ndimage import gaussian_filter1d, maximum_filter1d, minimum_filter1d
+
+        self.corrected = (self.F - self.neucoeff * self.Fneu).astype(np.float32)
+
+        win = max(int(win_baseline * self.fs), 1)
+        base = gaussian_filter1d(self.corrected, sig_baseline, axis=1)
+        base = minimum_filter1d(base, win, axis=1)
+        base = maximum_filter1d(base, win, axis=1)
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            self.dff = np.where(base > 0, (self.corrected - base) / base, np.nan).astype(np.float32)
+
+        n_dim = int(np.isnan(self.dff).any(axis=1).sum())
+        if n_dim:
+            tprint(f"dF/F undefined for {n_dim}/{self.n_roi} ROIs with a non-positive baseline")
+
+    def save(self, path=None):
+        """
+        Save the suite2p data to a MATLAB file.
+        """
+        if path is None:
+            fd = os.path.dirname(os.path.dirname(self.path)) # up out of suite2p/planeN
+            path = finder(path=fd, folder=False, multiple=False, pattern=r'.mat$')
+            if path is None:
+                fn = os.path.basename(fd) + '_data.mat'
+                print("No path provided. Saving .mat file in the current directory.")
+                path = os.path.join(fd, fn)
+
+        data = {key: getattr(self, key) for key in
+                ('F', 'Fneu', 'spks', 'stat', 'iscell', 'corrected', 'dff')}
+        data['ops'] = {key: self.ops[key] for key in self.OPS if key in self.ops}
+        data['ops']['fs'] = self.fs # the rate the traces were actually parsed at
+
+        savemat_safe(path, {"suite2p": data})
+
+
 if __name__ == "__main__":
     fd = "/home/kimd/Downloads"
 
