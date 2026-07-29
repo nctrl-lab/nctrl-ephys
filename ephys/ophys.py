@@ -349,31 +349,51 @@ class VRec:
         )
 
         data = np.memmap(self.fn_bin, dtype="<i2", mode="r")
-        self.data_raw = data[:n_sample_raw * self.n_channel].reshape(n_sample_raw, -1)
+        self.data_raw = data[:n_sample_raw * self.n_channel].reshape(n_sample_raw, -1)[:self.n_sample] # remove padding rows
 
-    def parse_data(self, threshold=2.5):
+    def parse_data(self, threshold=2.5, jitter=0.002):
         """
         Pulse on/off times (s) per channel, as an (n_pulse, 2) array.
 
         self.data[channel] = np.stack([onsets, offsets], axis=1)
 
+        Args:
+            threshold: logic level (V) separating low from high.
+            jitter: pulses shorter than this (s) are dropped as glitches.
+
         Notes:
-            - The raw data are padded with zeros, so the number of onsets and offsets is equal.
+            - `high` is padded with a low sample at both ends, so a line that is
+              already high at the first sample (or still high at the last) still
+              yields matching numbers of onsets and offsets.
         """
-        data = {}
+        self.trial = None
+        self.t0 = 0.0
+
+        data, dropped = {}, {}
         for c, channel in enumerate(self.channels):
             high = np.zeros(len(self.data_raw) + 2, dtype=bool)
             np.greater(self.data_raw[:, c], threshold / VOLT_PER_BIT, out=high[1:-1])
 
             on = np.flatnonzero(~high[:-1] & high[1:]) / self.sample_rate
             off = np.flatnonzero(high[:-1] & ~high[1:]) / self.sample_rate
-            data[channel] = np.stack([on, off], axis=1)
+            pulse = np.stack([on, off], axis=1)
+
+            is_good = (pulse[:, 1] - pulse[:, 0]) >= jitter
+            if not is_good.all():
+                dropped[channel] = int((~is_good).sum())
+            data[channel] = pulse[is_good]
+
+        if dropped:
+            tprint(
+                f"Dropped pulses shorter than {jitter * 1e3:g} ms: "
+                + ", ".join(f"{ch} x{n}" for ch, n in dropped.items())
+            )
 
         # Realign by the first frame onset (AI 1) to match the PrairieView XML frame table
-        if "AI 1" in data:
-            t0 = data["AI 1"][0, 0]
+        if len(data.get("AI 1", ())):
+            self.t0 = data["AI 1"][0, 0]
             for channel in self.channels:
-                data[channel] -= t0
+                data[channel] -= self.t0
 
         self.data = data
 
@@ -420,7 +440,7 @@ class VRec:
 
         direction = self.channels.index("AI 5")
         level = lambda t: (
-            np.asarray(self.data_raw[(t * self.sample_rate).astype(np.int64), direction])
+            np.asarray(self.data_raw[((t + self.t0) * self.sample_rate).astype(np.int64), direction])
             > threshold / VOLT_PER_BIT
         )
         cue = level((time_cue + time_choice) / 2) + 1 # 1: left, 2: right
