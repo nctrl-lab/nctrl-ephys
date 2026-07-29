@@ -360,22 +360,43 @@ class VRec:
         Notes:
             - The raw data are padded with zeros, so the number of onsets and offsets is equal.
         """
-        self.data = {}
+        data = {}
         for c, channel in enumerate(self.channels):
             high = np.zeros(len(self.data_raw) + 2, dtype=bool)
             np.greater(self.data_raw[:, c], threshold / VOLT_PER_BIT, out=high[1:-1])
 
             on = np.flatnonzero(~high[:-1] & high[1:]) / self.sample_rate
             off = np.flatnonzero(high[:-1] & ~high[1:]) / self.sample_rate
-            self.data[channel] = np.stack([on, off], axis=1)
+            data[channel] = np.stack([on, off], axis=1)
+
+        # Realign by the first frame onset (AI 1) to match the PrairieView XML frame table
+        if "AI 1" in data:
+            t0 = data["AI 1"][0, 0]
+            for channel in self.channels:
+                data[channel] -= t0
+
+        self.data = data
 
     def frame2time(self, idx):
         """Convert a frame index to time (s) using the frame table."""
         if self.data is None:
             raise ValueError("Data are not loaded")
 
-        time_frame = np.mean(self.data["AI 1"], axis=1)
+        time_frame = np.mean(self.data["AI 1"], axis=1) # midpoint of each frame
         return time_frame[idx]
+
+    def time2frame(self, t):
+        """
+        Convert time (s) to the nearest frame index using the frame table.
+
+        frame 0 --| frame 1 --| frame 2 --|... -- frame n-1
+                       |
+                       t --> (1)
+        """
+        if self.data is None:
+            raise ValueError("Data are not loaded")
+
+        return np.searchsorted(self.data["AI 1"][:, 0], t, side="right") - 1
 
     def parse_task(self, task="vr", threshold=2.5):
         """
