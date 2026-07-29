@@ -144,6 +144,82 @@ spike.plot() # this will generate an interactive raster and PSTH figure to brows
 6. Load the data using `ephys.spike.Spike` class.
 
 
+## Pipeline for Bruker 2p data
+1. Record two-photon imaging with PrairieView. One session folder holds:
+    - `SESSION.xml`: the per-frame table (index, absolute/relative time, file, page, channel) and the microscope state.
+    - `SESSION.env`: the acquisition environment. This is what the module looks for to locate a session.
+    - `SESSION.companion.ome`: OME metadata with the per-frame timestamp and stage position, which the PrairieView XML does not carry.
+    - `SESSION_CycleNNNNN_ChN_NNNNNN.ome.tif`: the images.
+    - `SESSION_CycleNNNNN_VoltageRecording_NNN.xml` and its binary: the analog/TTL channels.
+2. Inspect the imaging session (`ephys ophys`)
+    - This prints the microscope settings, the frame table, and the measured frame rate.
+    - It counts frames three independent ways (PrairieView XML, companion OME, TIFF pages) and marks a disagreement as `MISMATCH`, which is the quickest way to catch a truncated or still-writing session.
+    - Nothing is written; this step is read-only.
+    - Counting TIFF pages directly (`Ophys.count_tiff(exact=True)`) needs `tifffile`, which is not installed by default. Without it, the count comes from the companion OME.
+3. Extract the voltage recording and the behavior (`ephys vrec`)
+    - This turns every channel into on/off pulse times, then parses the trial structure of the VR task (`--task vr`, the default).
+    - All times are realigned so that the first imaging frame onset (AI 1) is t = 0, which puts them on the same clock as the PrairieView frame table.
+    - The result is saved to `FOLDER_data.mat` with `channels`, `data` (per channel, an `(n_pulse, 2)` array of on/off times in seconds), and `trial`. Re-running merges into an existing `.mat` after asking to overwrite.
+    - The TTL channel map the VR task expects:
+        - AI 1: 2p imaging frame, high once per frame
+        - AI 2: task start (on) and end (off)
+        - AI 3: delay start (on), cue start (off)
+        - AI 4: choice/ITI start (on), next trial delay start (off)
+        - AI 5: direction, read during the cue and the choice window (1: left, 2: right)
+        - AI 6: water reward
+    - Crosstalk puts sub-millisecond pulses on otherwise idle lines, and each one would be counted as a phantom trial or reward. Pulses shorter than `jitter` (2 ms by default) are dropped, and the dropped count is reported per channel. Real TTLs here are 31 ms and longer, so the margin is wide; retune per rig with `VRec.parse_data(jitter=...)` and then re-run `parse_task()`.
+4. Load the data using the `ephys.ophys.Ophys` and `ephys.ophys.VRec` classes.
+    - `VRec.frame2time(idx)` gives the time of an imaging frame, and `VRec.time2frame(t)` gives the frame a task event falls in. Use these to put imaging and behavior on one index.
+
+```python
+from ephys.ophys import Ophys, VRec
+
+path = '/path/to/20260711_DIT09_4X-136'
+ophys = Ophys(path)
+print(ophys)
+
+vrec = VRec(path, task='vr')
+print(vrec)
+vrec.save()
+```
+
+```python
+ophys
+    Ophys: 20260711_DIT09_4X-136.xml
+        laserPower:
+            Uncaging Laser Power Modulator: 0
+            Imaging Laser Power Modulator: 250
+        pmtGain:
+            Detector 1: 748.192749
+            Detector 2: 900
+        framePeriod: 0.033182
+        rastersPerFrame: 2
+        linesPerFrame: 512
+        pixelsPerLine: 512
+        opticalZoom: 4
+    frames: (35004, 7) ['cycle', 'index', 'absoluteTime', 'relativeTime', 'filename', 'page', 'channel']
+        1 cycle(s), 1 channel(s), 15.07 Hz
+    ome: (35004, 9) ['t', 'z', 'c', 'deltaTime', 'positionX', 'positionY', 'positionZ', 'filename', 'ifd']
+    n_frame: xml 35004, ome 35004, tiff 35004
+vrec
+    VRec: 20260711_DIT09_4X-136_Cycle00001_VoltageRecording_001.xml
+    23230464 samples @ 10000 Hz = 2323.0 s
+        AI 1: 35006 pulses, duration: 0.066 s
+        AI 2: 1 pulses, duration: 2315.481 s
+        AI 3: 126 pulses, duration: 4.603 s
+        AI 4: 125 pulses, duration: 8.164 s
+        AI 5: 83 pulses, duration: 12.063 s
+        AI 6: 89 pulses, duration: 0.065 s
+        AI 7: 0 pulses, duration: 0.000 s
+        AI 8: 0 pulses, duration: 0.000 s
+    trial: 125 trials, 89 rewarded
+        ['nTrialNidq', 'timeStartNidq', 'timeCueNidq', 'timeChoiceNidq', 'timeEndNidq', 'cueNidq', 'choiceNidq', 'resultNidq']
+```
+
+- AI 1 usually carries a few more pulses than there are saved frames: PrairieView keeps the frame clock running for a moment past the last frame it writes. The extra pulses sit at the end, so frame indices still line up.
+- The binary voltage file can be longer than `SamplesAcquired` in its XML. The trailing rows are a stale acquisition buffer, not data, and are dropped on load; the sample count in the XML is authoritative.
+
+
 ## Usage
 ### Command Line Interface
 The package provides a command-line interface (CLI) for various operations. Below are some examples:
