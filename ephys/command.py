@@ -1,6 +1,8 @@
 import os
 import click
 
+from ephys.ophys import Ophys
+
 @click.group()
 def main():
     pass
@@ -111,3 +113,17 @@ def task(path, type):
     task.save()
     task.summary()
     task.plot()
+
+@main.command()
+@click.option('--path', type=click.Path(exists=True), default=None)
+def vrec(path):
+    from .ophys import VRec
+    vrec = VRec(path)
+    print(vrec)
+    vrec.save()
+
+@main.command()
+@click.option('--path', type=click.Path(exists=True), default=None)
+def ophys(path):
+    ophys = Ophys(path)
+    print(ophys)

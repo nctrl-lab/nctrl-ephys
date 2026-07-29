@@ -573,7 +573,7 @@ def get_spike_bin_nd(time_spike, time_trial, bin_size=0.01, window=[-5, 5], sigm
     spike_bin = (right_idx - left_idx).reshape(*time_trial.shape, n_time)
 
     if sigma == 0:
-        return time_bin, spike_bin
+        return time_center, spike_bin
     
     in_time = (time_center >= window[0]) & (time_center <= window[1])
     time_conv = time_center[in_time]
