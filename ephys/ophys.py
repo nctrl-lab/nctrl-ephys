@@ -295,13 +295,19 @@ class VRec:
         self.n_channel = len(self.channels)
         self.sample_rate = float(experiment["Rate"])
         self.n_sample = int(self.meta["SamplesAcquired"])
-        self.fn_bin = os.path.join(os.path.dirname(self.fn_xml), self.meta["DataFile"])
+
+        base = os.path.join(
+            os.path.dirname(self.fn_xml), os.path.splitext(self.meta["DataFile"])[0]
+        )
+        self.fn_bin = next((fn for fn in (base, base + ".bin") if os.path.isfile(fn)), None)
+        self.fn_csv = base + ".csv" if os.path.isfile(base + ".csv") else None
+        if self.fn_bin is None and self.fn_csv is None:
+            raise FileNotFoundError(f"No voltage recording data at {base}")
 
         self.data_raw = None
         self.data = None
         self.trial = None
 
-        # Load the binary data
         self.load_data()
         self.parse_data()
 
@@ -334,6 +340,9 @@ class VRec:
         return self.n_sample / self.sample_rate
 
     def load_data(self):
+        self.data_raw = self.load_bin() if self.fn_bin else self.load_csv()
+
+    def load_bin(self):
         """Loading the binary data"""
         n_sample_raw = os.path.getsize(self.fn_bin) // 2 // self.n_channel
         if n_sample_raw != self.n_sample:
@@ -350,7 +359,37 @@ class VRec:
         )
 
         data = np.memmap(self.fn_bin, dtype="<i2", mode="r")
-        self.data_raw = data[:n_sample_raw * self.n_channel].reshape(n_sample_raw, -1)[:self.n_sample] # remove padding rows
+        return data[:n_sample_raw * self.n_channel].reshape(n_sample_raw, -1)[:self.n_sample] # remove padding rows
+
+    def load_csv(self, block_size=1 << 20):
+        """Loading the CSV data"""
+        tprint(
+            f"Loading {os.path.basename(self.fn_csv)}: {self.n_sample} samples "
+            f"@ {self.sample_rate:g} Hz = {self.duration:.1f} s, "
+            f"{self.n_channel} channels {self.channels}"
+        )
+
+        # This is slower than pyarrow...
+        blocks = pd.read_csv(
+            self.fn_csv, usecols=self.channels, dtype=np.float32,
+            chunksize=max(block_size // (10 * (self.n_channel + 1)), 1),
+        )
+
+        data = np.empty((self.n_sample, self.n_channel), dtype=np.int16)
+        n_row = 0
+        for block in blocks:
+            n_fit = min(len(block), self.n_sample - n_row)
+            if n_fit > 0:
+                volt = np.column_stack([np.asarray(block[c])[:n_fit] for c in self.channels])
+                data[n_row:n_row + n_fit] = np.rint(volt / VOLT_PER_BIT)
+            n_row += len(block)
+
+        if n_row != self.n_sample:
+            tprint(
+                f"{self.fn_csv} holds {n_row} rows, mismatched with "
+                f"{self.n_sample} samples in the XML"
+            )
+        return data[:min(n_row, self.n_sample)]
 
     def parse_data(self, threshold=2.5, jitter=0.002):
         """
@@ -479,7 +518,7 @@ class VRec:
         """
         if path is None:
             fd = os.path.dirname(self.fn_xml)
-            path = finder(path=fd, folder=False, multiple=False, pattern=r'.mat$')
+            path = finder(path=fd, folder=False, multiple=False, pattern=r'_data.mat$')
             if path is None:
                 fn = os.path.basename(fd) + '_data.mat'
                 print("No path provided. Saving .mat file in the current directory.")
@@ -614,7 +653,7 @@ class Suite2p:
         """
         if path is None:
             fd = os.path.dirname(os.path.dirname(self.path)) # up out of suite2p/planeN
-            path = finder(path=fd, folder=False, multiple=False, pattern=r'.mat$')
+            path = finder(path=fd, folder=False, multiple=False, pattern=r'_data.mat$')
             if path is None:
                 fn = os.path.basename(fd) + '_data.mat'
                 print("No path provided. Saving .mat file in the current directory.")

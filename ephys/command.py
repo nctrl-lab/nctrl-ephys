@@ -116,7 +116,7 @@ def task(path, type):
 
 @main.command()
 @click.option('--path', type=click.Path(exists=True), default=None)
-@click.option('--task', type=click.Choice(['vr']), default='vr')
+@click.option('--task', type=click.Choice(['vr', 'none']), default='none')
 def vrec(path, task):
     from .ophys import VRec
     vrec = VRec(path, task=task)
