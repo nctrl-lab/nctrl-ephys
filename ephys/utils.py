@@ -357,6 +357,38 @@ def get_path(key, name=None, initialdir=None, reset=False):
         return None
 
 
+def merge_pulses(data, threshold = 1.0):
+    """
+    Merge overlapping pulses in a 2D array of start and end times.
+
+    Parameters:
+    -----------
+    data : np.ndarray
+        A 2D array of shape (N, 2) where each row represents a pulse with start and end times.
+    threshold : float, optional
+        The maximum allowed gap between pulses to consider them overlapping. Defaults to 1.0.
+    
+    Returns:
+    --------
+    np.ndarray
+        A 2D array of merged pulses with shape (M, 2), where M is the number of merged pulses.
+    """
+    import numpy as np
+
+    if type(data) != np.ndarray:
+        raise TypeError("data must be a numpy array")
+
+    if data.ndim != 2 or data.shape[1] != 2:
+        raise ValueError("data must be a 2D array with shape (N, 2)")
+
+    is_break = data[1:, 0] - data[:-1, 1] > threshold
+
+    start = np.r_[0, np.flatnonzero(is_break) + 1]
+    end = np.r_[np.flatnonzero(is_break), len(data) - 1]
+
+    return np.stack([data[start, 0], data[end, 1]], axis=1)
+
+
 if __name__ == "__main__":
     # print(finder(folder=True, multiple=True, pattern=r'.bin$'))
     # print(file_reorder(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']))
