@@ -386,7 +386,129 @@ def merge_pulses(data, threshold = 1.0):
     start = np.r_[0, np.flatnonzero(is_break) + 1]
     end = np.r_[np.flatnonzero(is_break), len(data) - 1]
 
-    return np.stack([data[start, 0], data[end, 1]], axis=1)
+    return np.stack([data[start, 0], data[end, 1]], axis=1)# --- Matplotlib Style ---
+
+
+def mystyle(width_ratio=1, height_ratio=1, *, margins=None):
+    """Set the paper style and the axes size.
+
+    width_ratio and height_ratio give the axes size, in units of 6.375 inch.
+    Equal values make a square axes. After that, the figure grows by a fixed
+    margin for the labels. Two panels made with the same ratio get the same
+    size, so they line up. Returns None. For a grid of
+    panels, use mysubplots instead. Examples:
+
+        mystyle(0.2, 0.2); fig, ax = plt.subplots()        # square 1.275 in axes
+        mystyle(0.2, 0.2, margins=(0.6, 0.15, 0.6, 0.15))  # more room left/bottom
+
+    * Do not use plt.tight_layout() or fig.tight_layout() after this. It will
+      change the axes size and misalign panels.
+    """
+    import matplotlib as mpl
+    import matplotlib.pyplot as plt
+    import matplotlib.font_manager as font_manager
+
+    plt.rcdefaults()
+
+    axes_w, axes_h = 6.375 * width_ratio, 6.375 * height_ratio
+    ml, mr, mb, mt = margins or (0.5, 0.15, 0.4, 0.15)
+    fig_w, fig_h = ml + axes_w + mr, mb + axes_h + mt
+
+    mpl.rcParams["figure.figsize"] = [fig_w, fig_h]
+    mpl.rcParams["figure.dpi"] = 300
+    mpl.rcParams["figure.autolayout"] = False
+    mpl.rcParams["figure.subplot.left"] = ml / fig_w
+    mpl.rcParams["figure.subplot.right"] = (ml + axes_w) / fig_w
+    mpl.rcParams["figure.subplot.bottom"] = mb / fig_h
+    mpl.rcParams["figure.subplot.top"] = (mb + axes_h) / fig_h
+
+    # Fonts
+    SMALL, MEDIUM, BIGGER = 6, 6, 7
+    mpl.rcParams.update(
+        {
+            "font.family": "Arial",
+            "font.sans-serif": [
+                "Arial",
+                "Liberation Sans",
+                "Nimbus Sans",
+                "DejaVu Sans",
+            ],
+            "font.size": MEDIUM,
+            "figure.labelsize": BIGGER,
+            "axes.titlesize": MEDIUM,
+            "axes.labelsize": MEDIUM,
+            "xtick.labelsize": SMALL,
+            "ytick.labelsize": SMALL,
+            "legend.fontsize": SMALL,
+            # Line widths
+            "axes.linewidth": 0.5,
+            "xtick.major.width": 0.5,
+            "ytick.major.width": 0.5,
+            # Gap between a tick and its tick label (default 3.5)
+            "xtick.major.pad": 2,
+            "ytick.major.pad": 2,
+            # Gap for the axis label and the title (default labelpad 4, titlepad 6)
+            "axes.labelpad": 2,
+            "axes.titlepad": 3,
+            # Hide the top and right axis lines
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            # Plot line width and marker size
+            "lines.linewidth": 0.75,
+            "lines.markersize": 6,
+            "lines.markeredgewidth": 0,
+            # Save text as text, not as vector shapes
+            "svg.fonttype": "none",
+        }
+    )
+
+    resolved_font = font_manager.findfont(
+        font_manager.FontProperties(family=mpl.rcParams["font.family"])
+    )
+    print(f"[mystyle] font in use: {resolved_font}")
+
+
+def mysubplots(
+    width_ratio=1,
+    height_ratio=1,
+    nrows=1,
+    ncols=1,
+    *,
+    width_ratios=None,
+    height_ratios=None,
+    gap=0.1,
+    margins=None,
+    **kwargs,
+):
+    """Do mystyle and plt.subplots together, with exact sizing.
+
+    width_ratio and height_ratio set the size of the whole block of panels
+    (square when equal). The panels share this block. A `gap` (in inches) is
+    left between them, and the rest is split by width_ratios/height_ratios.
+    Extra kwargs (sharey, ...) are passed to plt.subplots. Returns (fig, ax)
+    or (fig, axs). Example:
+
+        fig, axs = mysubplots(0.3, 0.15, ncols=3, width_ratios=[2, 2, 1], sharey=True)
+    """
+    import matplotlib.pyplot as plt
+
+    mystyle(width_ratio, height_ratio, margins=margins)
+    wr = width_ratios or [1] * ncols
+    hr = height_ratios or [1] * nrows
+    kwargs.pop("figsize", None)
+    gridspec = {
+        **kwargs.pop("gridspec_kw", {}),
+        "width_ratios": wr,
+        "height_ratios": hr,
+    }
+    fig, axs = plt.subplots(nrows, ncols, gridspec_kw=gridspec, **kwargs)
+
+    block_w, block_h = 6.375 * width_ratio, 6.375 * height_ratio
+    fig.subplots_adjust(
+        wspace=gap * ncols / (block_w - (ncols - 1) * gap) if ncols > 1 else 0,
+        hspace=gap * nrows / (block_h - (nrows - 1) * gap) if nrows > 1 else 0,
+    )
+    return fig, axs
 
 
 if __name__ == "__main__":
