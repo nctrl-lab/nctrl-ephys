@@ -34,14 +34,15 @@ COLOR_CYCLE = [
     "#F0E442",  # yellow
 ]
 
-# Metric-compatible clones, so text keeps the same extents on a machine that is
-# missing the first font.
+# Metric-compatible clones. DejaVu Sans is left out on purpose: it is what we
+# warn about.
 FONT_STACK = [
     "Helvetica",
-    "Helvetical Neue LT Std",
-    "Heveltica Neue",
+    "Helvetica Neue LT Std",
+    "Helvetica Neue",
     "Arial",
-    "DejaVu Sans",
+    "Liberation Sans",
+    "Nimbus Sans",
 ]
 
 
@@ -54,14 +55,14 @@ def _axes_size_mm(width_ratio, height_ratio, width_mm, height_mm):
 
 
 def _warn_on_font_fallback():
-    """Warn if the font we end up drawing with is not the one we asked for."""
-    wanted = mpl.rcParams["font.sans-serif"][0]
+    """Warn if we end up drawing with a font that is not in the stack."""
+    wanted = mpl.rcParams["font.sans-serif"]
     path = font_manager.findfont(font_manager.FontProperties(family=["sans-serif"]))
     found = font_manager.FontProperties(fname=path).get_name()
-    if found != wanted:
+    if found not in wanted:
         warnings.warn(
-            f"{wanted} is not installed, drawing with {found} instead. "
-            f"Text will not have the same extents as a {wanted} figure.",
+            f"None of {', '.join(wanted)} is installed, drawing with {found} "
+            f"instead. Text will not have the same extents as a {wanted[0]} figure.",
             stacklevel=3,
         )
 
@@ -103,8 +104,7 @@ def mystyle(
     SMALL, MEDIUM, BIGGER = 6, 6, 7
     mpl.rcParams.update(
         {
-            # Naming one font here would skip the list below and fall back to
-            # matplotlib's own DejaVu Sans whenever that font is missing.
+            # Naming one font here would skip the list below.
             "font.family": "sans-serif",
             "font.sans-serif": FONT_STACK,
             "font.size": MEDIUM,
@@ -121,15 +121,15 @@ def mystyle(
             "ytick.major.width": 0.5,
             "xtick.minor.width": 0.5,
             "ytick.minor.width": 0.5,
-            # Tick length (default 3.5 is long next to a 0.5 pt spine)
+            # Tick length (default 3.5)
             "xtick.major.size": 2,
             "ytick.major.size": 2,
             "xtick.minor.size": 1,
             "ytick.minor.size": 1,
-            # Gap between a tick and its tick label (default 3.5)
+            # Tick label gap (default 3.5)
             "xtick.major.pad": 2,
             "ytick.major.pad": 2,
-            # Gap for the axis label and the title (default labelpad 4, titlepad 6)
+            # Axis label and title gap (default 4, 6)
             "axes.labelpad": 2,
             "axes.titlepad": 3,
             "axes.spines.top": False,
@@ -139,7 +139,7 @@ def mystyle(
             "lines.markeredgewidth": 0,
             # Plain hyphen for minus: U+2212 comes out wrong in Illustrator.
             "axes.unicode_minus": False,
-            # Save text as text, not as vector shapes
+            # Save text as text, not as outlines
             "svg.fonttype": "none",
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
@@ -201,8 +201,7 @@ def mysubplots(
     }
     fig, axs = plt.subplots(nrows, ncols, gridspec_kw=gridspec, **kwargs)
 
-    # wspace is a fraction of the average panel width, so the gap stays exact
-    # whatever the width_ratios are.
+    # wspace is a fraction of the average panel width, so the gap stays exact.
     block_w, block_h = _axes_size_mm(width_ratio, height_ratio, width_mm, height_mm)
     fig.subplots_adjust(
         wspace=gap_mm * ncols / (block_w - (ncols - 1) * gap_mm) if ncols > 1 else 0,
