@@ -1,12 +1,9 @@
 """Paper style for matplotlib, with an exact axes size.
 
-Sizes are in millimeters, the unit journals use in their figure specs.
-mystyle and mysubplots pin the *axes* size and grow the figure around it by a
-fixed margin, so two panels made with the same ratio come out the same size and
-line up when you put them side by side in Illustrator.
+Sizes are in millimeters. mystyle and mysubplots pin the *axes* size and grow the
+figure around it by a fixed margin, so panels made with the same ratio come out
+the same size and line up in Illustrator.
 """
-
-import warnings
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -15,14 +12,13 @@ from matplotlib.transforms import ScaledTranslation
 
 MM_PER_INCH = 25.4
 
-# Width of a full-page panel. Cell 174, Nature 180, Science 184.
+# Full-page panel width. Cell 174, Nature 180, Science 184.
 FULL_WIDTH_MM = 174.0
 
-# Space around the axes for the labels: left, right, bottom, top, in mm.
+# Room for the labels: left, right, bottom, top.
 MARGINS_MM = (13.0, 4.0, 10.0, 4.0)
 
-# Okabe-Ito, safe for the common kinds of color blindness.
-# https://jfly.uni-koeln.de/color/
+# Okabe-Ito, color-blind safe. https://jfly.uni-koeln.de/color/
 COLOR_CYCLE = [
     "#000000",  # black
     "#E69F00",  # orange
@@ -34,8 +30,6 @@ COLOR_CYCLE = [
     "#F0E442",  # yellow
 ]
 
-# Metric-compatible clones. DejaVu Sans is left out on purpose: it is what we
-# warn about.
 FONT_STACK = [
     "Helvetica",
     "Helvetica Neue LT Std",
@@ -47,24 +41,17 @@ FONT_STACK = [
 
 
 def _axes_size_mm(width_ratio, height_ratio, width_mm, height_mm):
-    """Give the axes size in mm, from either the ratios or an explicit size."""
     return (
         FULL_WIDTH_MM * width_ratio if width_mm is None else width_mm,
         FULL_WIDTH_MM * height_ratio if height_mm is None else height_mm,
     )
 
 
-def _warn_on_font_fallback():
-    """Warn if we end up drawing with a font that is not in the stack."""
-    wanted = mpl.rcParams["font.sans-serif"]
+def _pin_font():
     path = font_manager.findfont(font_manager.FontProperties(family=["sans-serif"]))
     found = font_manager.FontProperties(fname=path).get_name()
-    if found not in wanted:
-        warnings.warn(
-            f"None of {', '.join(wanted)} is installed, drawing with {found} "
-            f"instead. Text will not have the same extents as a {wanted[0]} figure.",
-            stacklevel=3,
-        )
+    mpl.rcParams["font.family"] = found
+    print(f"Font: {found} ({path})")
 
 
 def mystyle(
@@ -72,19 +59,17 @@ def mystyle(
 ):
     """Set the paper style and the axes size.
 
-    width_ratio and height_ratio give the axes size, in units of FULL_WIDTH_MM
-    (174 mm, a full page-width panel). Equal values make a square axes. After
-    that, the figure grows by a fixed margin for the labels. Two panels made
-    with the same ratio get the same size, so they line up. Give width_mm and
-    height_mm instead to set the size in mm directly. Returns None. For a grid
-    of panels, use mysubplots instead. Examples:
+    width_ratio and height_ratio give the axes size in units of FULL_WIDTH_MM
+    (equal values make a square axes); width_mm and height_mm set it in mm
+    instead. The figure then grows by a fixed margin for the labels. For a grid
+    of panels, use mysubplots. Examples:
 
         mystyle(0.2, 0.2); fig, ax = plt.subplots()      # square 34.8 mm axes
         mystyle(width_mm=40, height_mm=25)               # 40 x 25 mm axes
         mystyle(0.2, 0.2, margins_mm=(16, 4, 16, 4))     # more room left/bottom
 
-    * Do not use plt.tight_layout() or fig.tight_layout() after this. It will
-      change the axes size and misalign panels.
+    * Do not use tight_layout() after this. It will change the axes size and
+      misalign panels.
     """
     plt.rcdefaults()
 
@@ -100,7 +85,6 @@ def mystyle(
     mpl.rcParams["figure.subplot.bottom"] = mb / fig_h
     mpl.rcParams["figure.subplot.top"] = (mb + axes_h) / fig_h
 
-    # Fonts
     SMALL, MEDIUM, BIGGER = 6, 6, 7
     mpl.rcParams.update(
         {
@@ -115,21 +99,17 @@ def mystyle(
             "ytick.labelsize": SMALL,
             "legend.fontsize": SMALL,
             "axes.prop_cycle": mpl.cycler(color=COLOR_CYCLE),
-            # Line widths
             "axes.linewidth": 0.5,
             "xtick.major.width": 0.5,
             "ytick.major.width": 0.5,
             "xtick.minor.width": 0.5,
             "ytick.minor.width": 0.5,
-            # Tick length (default 3.5)
             "xtick.major.size": 2,
             "ytick.major.size": 2,
             "xtick.minor.size": 1,
             "ytick.minor.size": 1,
-            # Tick label gap (default 3.5)
             "xtick.major.pad": 2,
             "ytick.major.pad": 2,
-            # Axis label and title gap (default 4, 6)
             "axes.labelpad": 2,
             "axes.titlepad": 3,
             "axes.spines.top": False,
@@ -137,16 +117,16 @@ def mystyle(
             "lines.linewidth": 0.75,
             "lines.markersize": 3,
             "lines.markeredgewidth": 0,
-            # Plain hyphen for minus: U+2212 comes out wrong in Illustrator.
+            # U+2212 comes out wrong in Illustrator.
             "axes.unicode_minus": False,
-            # Save text as text, not as outlines
+            "savefig.transparent": True,
             "svg.fonttype": "none",
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
         }
     )
 
-    _warn_on_font_fallback()
+    _pin_font()
 
 
 def mysubplots(
@@ -165,17 +145,15 @@ def mysubplots(
 ):
     """Do mystyle and plt.subplots together, with exact sizing.
 
-    width_ratio and height_ratio set the size of the whole block of panels
-    (square when equal), in units of FULL_WIDTH_MM. The panels share this block.
-    A gap_mm is left between them, and the rest is split by
-    width_ratios/height_ratios. Extra kwargs (sharey, ...) are passed to
-    plt.subplots. Returns (fig, ax) or (fig, axs). Example:
+    width_ratio and height_ratio set the size of the whole block of panels. The
+    panels share this block: a gap_mm is left between them, and the rest is split
+    by width_ratios/height_ratios. Extra kwargs (sharey, ...) go to plt.subplots.
+    Returns (fig, ax) or (fig, axs). Example:
 
         fig, axs = mysubplots(0.3, 0.15, ncols=3, width_ratios=[2, 2, 1], sharey=True)
 
-    * gap_mm is pure white space. It does not reserve room for tick labels or
-      axis labels between panels, so panels with their own y axis need a gap
-      wide enough for the labels.
+    * gap_mm is pure white space. Panels with their own y axis need a gap wide
+      enough for the labels.
     """
     old = {"gap": "gap_mm", "margins": "margins_mm"}.keys() & kwargs.keys()
     if old:
@@ -213,9 +191,9 @@ def mysubplots(
 def panel_label(label, ax=None, *, dx_mm=-5.0, dy_mm=1.0, **kwargs):
     """Put a panel letter at a fixed offset from the top left of the axes.
 
-    The offset is in mm from the axes corner, not in data or axes fractions, so
-    the letters sit in the same place on every panel whatever its size. Extra
-    kwargs go to ax.text. Returns the Text. Example:
+    The offset is in mm, not in data or axes fractions, so the letters sit in the
+    same place on every panel whatever its size. Extra kwargs go to ax.text.
+    Returns the Text. Example:
 
         fig, axs = mysubplots(0.4, 0.2, ncols=2, gap_mm=12)
         for ax, letter in zip(axs, "AB"):
